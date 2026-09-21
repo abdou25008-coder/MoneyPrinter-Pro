@@ -22,7 +22,14 @@ from streamlit_tour import Tour
 
 # WebUI 作为独立入口运行时，需要让项目根目录优先于第三方依赖，
 # 避免依赖中的同名 app 包遮蔽 MoneyPrinterTurbo 自己的 app 包。
-root_dir = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+_file_dir = os.path.dirname(os.path.realpath(__file__))
+if os.path.basename(_file_dir) == "webui":
+    root_dir = os.path.dirname(_file_dir)
+    webui_dir = _file_dir
+else:
+    root_dir = _file_dir
+    webui_dir = os.path.join(root_dir, "webui")
+
 if root_dir in sys.path:
     sys.path.remove(root_dir)
 sys.path.insert(0, root_dir)
@@ -85,14 +92,21 @@ st.set_page_config(
 # MoneyPrinterTurbo 是面向终端用户的本地工具，这些入口会造成顶部大块空白，
 # 也会让新用户误以为需要安装额外组件。这里统一隐藏 Streamlit 平台工具栏，
 # 并压缩主容器顶部留白，只保留项目自己的标题、语言选择和业务设置区域。
-style_file = Path(__file__).with_name("styles.css")
-streamlit_style = f"<style>{style_file.read_text(encoding='utf-8')}</style>"
-st.markdown(streamlit_style, unsafe_allow_html=True)
+style_file = Path(webui_dir) / "styles.css"
+if not style_file.exists():
+    style_file = Path(root_dir) / "styles.css"
+if not style_file.exists():
+    style_file = Path(__file__).with_name("styles.css")
+
+if style_file.exists():
+    streamlit_style = f"<style>{style_file.read_text(encoding='utf-8')}</style>"
+    st.markdown(streamlit_style, unsafe_allow_html=True)
+
 # 定义资源目录
 font_dir = os.path.join(root_dir, "resource", "fonts")
 song_dir = os.path.join(root_dir, "resource", "songs")
-i18n_dir = os.path.join(root_dir, "webui", "i18n")
-config_file = os.path.join(root_dir, "webui", ".streamlit", "webui.toml")
+i18n_dir = os.path.join(webui_dir, "i18n") if os.path.exists(os.path.join(webui_dir, "i18n")) else os.path.join(root_dir, "webui", "i18n")
+config_file = os.path.join(webui_dir, ".streamlit", "webui.toml")
 # 语言列表必须在会话状态初始化前可用，首次访问时才能把浏览器 locale 映射到
 # 项目真正支持的语言；自动识别结果只进入当前会话，不修改全局配置。
 locales = utils.load_locales(i18n_dir)
