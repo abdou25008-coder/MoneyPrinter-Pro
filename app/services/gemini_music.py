@@ -118,6 +118,17 @@ def synthesize_procedural_gemini_bgm(output_path: str, duration: float, mood_inf
 class GeminiMusicError(Exception):
     pass
 
+def get_api_key() -> str:
+    configured_key = str(config.gemini.get("api_key", "") or "").strip()
+    return configured_key or os.getenv("GEMINI_API_KEY", "").strip()
+
+def is_enabled() -> bool:
+    return True
+
+def validate_generation_access():
+    pass
+
+
 def generate_bgm(video_path: str, output_path: str, video_duration: float, prompt: str = "") -> str:
     """
     Standard video music provider interface invoked by task.py.
