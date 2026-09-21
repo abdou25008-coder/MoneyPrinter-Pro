@@ -1015,11 +1015,94 @@ def reshape_arabic_if_needed(text: str) -> str:
     return text
 
 
+def resolve_safe_font_path(requested_font_name: str = "") -> str:
+    """
+    Safely resolves a font path that PIL / ImageFont / MoviePy can open without error.
+    Checks resource/fonts, system paths, /usr/share/fonts, Windows fonts, or auto-downloads
+    NotoSansArabic into resource/fonts.
+    """
+    def _is_valid(p: str) -> bool:
+        if not p or not os.path.isfile(p):
+            return False
+        try:
+            ImageFont.truetype(p, 20)
+            return True
+        except Exception:
+            return False
+
+    # 1. Direct path check
+    if requested_font_name and _is_valid(requested_font_name):
+        return requested_font_name.replace("\\", "/") if os.name == "nt" else requested_font_name
+
+    # 2. Check requested font inside resource/fonts
+    if requested_font_name:
+        p = os.path.join(utils.font_dir(), requested_font_name)
+        if _is_valid(p):
+            return p.replace("\\", "/") if os.name == "nt" else p
+
+    # 3. Check any existing fonts in resource/fonts
+    fdir = utils.font_dir()
+    if os.path.isdir(fdir):
+        for fname in os.listdir(fdir):
+            if fname.lower().endswith((".ttf", ".ttc", ".otf")):
+                p = os.path.join(fdir, fname)
+                if _is_valid(p):
+                    return p.replace("\\", "/") if os.name == "nt" else p
+
+    # 4. Check common Linux/Debian system font paths
+    common_linux = [
+        "/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+    ]
+    for p in common_linux:
+        if _is_valid(p):
+            return p
+
+    # 5. Search /usr/share/fonts recursively
+    if os.path.isdir("/usr/share/fonts"):
+        for root, _, files in os.walk("/usr/share/fonts"):
+            for fname in files:
+                if fname.lower().endswith((".ttf", ".ttc", ".otf")):
+                    p = os.path.join(root, fname)
+                    if _is_valid(p):
+                        return p
+
+    # 6. Check Windows system fonts
+    if os.name == "nt":
+        for wf in ["C:/Windows/Fonts/arial.ttf", "C:/Windows/Fonts/segoeui.ttf", "C:/Windows/Fonts/tahoma.ttf"]:
+            if _is_valid(wf):
+                return wf
+
+    # 7. Auto-download NotoSansArabic from CDN into resource/fonts
+    try:
+        cdn_url = "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSansArabic/NotoSansArabic-Regular.ttf"
+        target_path = os.path.join(utils.font_dir(), "NotoSansArabic.ttf")
+        import urllib.request
+        urllib.request.urlretrieve(cdn_url, target_path)
+        if _is_valid(target_path):
+            return target_path.replace("\\", "/") if os.name == "nt" else target_path
+    except Exception as dl_err:
+        logger.warning(f"Failed to download fallback font: {dl_err}")
+
+    return requested_font_name or "Arial"
+
+
 def wrap_text(text, max_width, font="Arial", fontsize=60):
     # 字幕换行必须在真正创建 TextClip 前完成，否则 MoviePy 只会按原始文本
     # 计算渲染区域。这里用 PIL 按当前字体和字号测量宽度，确保每一行都尽量
     # 控制在视频可用宽度内，避免大字号或中文长句直接溢出画面。
-    font = ImageFont.truetype(font, fontsize)
+    safe_font = resolve_safe_font_path(font)
+    try:
+        font = ImageFont.truetype(safe_font, fontsize)
+    except Exception:
+        try:
+            font = ImageFont.truetype(font, fontsize)
+        except Exception:
+            font = ImageFont.load_default()
     max_width = int(max_width)
 
     # getbbox() 返回的是“当前字形的可见墨迹高度”，并不是字体行高。例如只含
@@ -1272,12 +1355,7 @@ def generate_video(
 
     font_path = ""
     if params.subtitle_enabled:
-        if not params.font_name:
-            params.font_name = "STHeitiMedium.ttc"
-        font_path = os.path.join(utils.font_dir(), params.font_name)
-        if os.name == "nt":
-            font_path = font_path.replace("\\", "/")
-
+        font_path = resolve_safe_font_path(params.font_name or "Arial.ttf")
         logger.info(f"  ⑤ font: {font_path}")
 
     def resolve_subtitle_background_color():
