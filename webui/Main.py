@@ -5115,8 +5115,12 @@ def _render_script_settings(panel, params):
                 format_func=lambda v: dict((val, label) for label, val in duration_options).get(v, str(v)),
                 help=tr("Controls script word count, speaking pacing, and total scene count."),
             )
-            params.video_target_duration = int(selected_duration)
-            st.session_state["video_target_duration"] = params.video_target_duration
+            target_dur_val = int(selected_duration)
+            st.session_state["video_target_duration"] = target_dur_val
+            try:
+                params.video_target_duration = target_dur_val
+            except Exception:
+                pass
 
             # 模型发现只增强视频素材，不改变用户明确选择的文案 Provider。
             if _effective_script_generation_backend() == "loomloom":
@@ -5170,13 +5174,18 @@ def _render_script_settings(panel, params):
                 help=tr("Video Keywords Help"),
                 key="video_terms",
             )
-            params.thematic_anchor = st.text_input(
+            thematic_val = st.text_input(
                 tr("Thematic Visual Anchor (InVideo Style)"),
                 value=st.session_state.get("thematic_anchor", getattr(params, "thematic_anchor", "") or ""),
                 placeholder=tr("Auto-detected (e.g., deep sea underwater, outer space galaxy, desert dunes)"),
                 help=tr("Enforces strict visual cohesion across all stock clips, matching InVideo's scene-consistency engine."),
                 key="thematic_anchor",
             )
+            st.session_state["thematic_anchor"] = thematic_val
+            try:
+                params.thematic_anchor = thematic_val
+            except Exception:
+                pass
 
 
 def _render_video_settings(panel, params):
@@ -5329,15 +5338,19 @@ def _render_video_settings(panel, params):
             )
 
             # مؤثرات صوتية انتقالية سينمائية (Transition SFX)
-            params.sfx_enabled = st.checkbox(
+            sfx_val = st.checkbox(
                 tr("Enable Cinematic Transition SFX (Whoosh / Sub-drop)"),
                 value=st.session_state.get("sfx_enabled", getattr(params, "sfx_enabled", True)),
                 help=tr("Synthesizes cinematic whooshes, sub-bass impacts, and tension risers synchronized at scene cuts."),
                 key="sfx_enabled_toggle",
             )
-            st.session_state["sfx_enabled"] = params.sfx_enabled
-            if params.sfx_enabled:
-                params.sfx_volume = st.slider(
+            st.session_state["sfx_enabled"] = sfx_val
+            try:
+                params.sfx_enabled = sfx_val
+            except Exception:
+                pass
+            if sfx_val:
+                sfx_vol_val = st.slider(
                     tr("Transition SFX Volume"),
                     min_value=0.05,
                     max_value=1.0,
@@ -5345,7 +5358,11 @@ def _render_video_settings(panel, params):
                     step=0.05,
                     key="sfx_volume_slider",
                 )
-                st.session_state["sfx_volume"] = params.sfx_volume
+                st.session_state["sfx_volume"] = sfx_vol_val
+                try:
+                    params.sfx_volume = sfx_vol_val
+                except Exception:
+                    pass
 
             video_aspect_ratios = [
                 (tr("Portrait"), VideoAspect.portrait.value),
@@ -6651,14 +6668,18 @@ def _render_background_music_settings(params, elevenlabs_api_key_rendered=False)
     )
     _set_runtime_config("ui", "bgm_volume", params.bgm_volume)
 
-    params.bgm_ducking = st.checkbox(
+    ducking_val = st.checkbox(
         tr("Auto-ducking (Lower BGM volume when voiceover speaks)"),
         value=st.session_state.get("bgm_ducking", getattr(params, "bgm_ducking", True)),
         help=tr("Intelligently ducks background music under the narrator's voice for crystal clear speech."),
         key="bgm_ducking_checkbox",
         disabled=not params.bgm_type,
     )
-    st.session_state["bgm_ducking"] = params.bgm_ducking
+    st.session_state["bgm_ducking"] = ducking_val
+    try:
+        params.bgm_ducking = ducking_val
+    except Exception:
+        pass
 
     bgm_enabled = bgm_service.should_use_bgm(params.bgm_type, params.bgm_volume)
 
@@ -7970,11 +7991,15 @@ def _render_generation_controls(
     _render_settings_transfer(params)
 
     if config.app.get("buffer_enabled", False):
-        params.buffer_publish = st.checkbox(
+        buf_pub_val = st.checkbox(
             tr("Auto-publish to Buffer (Social Media)"),
             value=st.session_state.get("buffer_publish_toggle", True),
             key="buffer_publish_toggle",
         )
+        try:
+            params.buffer_publish = buf_pub_val
+        except Exception:
+            pass
 
     start_button = st.button(
         tr("Generate Video"),
