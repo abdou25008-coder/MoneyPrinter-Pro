@@ -17,7 +17,9 @@ from app.models import const
 from app.models.schema import VideoConcatMode, VideoParams
 from app.services import bgm as bgm_service
 from app.services import (
+    buffer_publisher,
     elevenlabs_music,
+    gemini_music,
     llm,
     loomloom,
     material,
@@ -52,27 +54,34 @@ _cross_post_slots = threading.BoundedSemaphore(_cross_post_max_pending_tasks)
 _cross_post_registry_lock = threading.RLock()
 _cross_post_futures: dict[str, Future] = {}
 _cross_post_process_owner = f"{socket.gethostname()}:{os.getpid()}:{uuid4().hex}"
-_ACTIVE_CROSS_POST_STATES = {
-    const.CROSS_POST_STATE_PENDING,
-    const.CROSS_POST_STATE_PROCESSING,
-}
-_CROSS_POST_STATE_WRITE_ATTEMPTS = 3
-_CROSS_POST_STATE_RETRY_DELAY_SECONDS = 0.1
-_LOOMLOOM_STATE_WRITE_ATTEMPTS = 3
-_LOOMLOOM_STATE_RETRY_DELAY_SECONDS = 0.1
+_CROSS_POST_STATE_WRITE_ATTEMPTS = 5
+_CROSS_POST_STATE_RETRY_DELAY_SECONDS = 0.5
+_LOOMLOOM_STATE_WRITE_ATTEMPTS = 5
+_LOOMLOOM_STATE_RETRY_DELAY_SECONDS = 0.5
+_ACTIVE_CROSS_POST_STATES = frozenset(
+    {const.CROSS_POST_STATE_PENDING, const.CROSS_POST_STATE_PROCESSING}
+)
+_VIDEO_TASK_TIMEOUT_SECONDS = 7200
 _INTERRUPTED_CROSS_POST_ERROR = (
     "cross-posting was interrupted before the process completed"
 )
-# Map upload-post platform ids to the social platform names llm.py accepts.
-_CROSS_POST_SOCIAL_PLATFORMS = {
+_UPLOAD_POST_PLATFORM_MAP = {
+    "youtube": "youtube",
     "tiktok": "tiktok",
-    "instagram": "instagram_reels",
+    "instagram": "instagram",
     "facebook": "facebook_reels",
 }
 # 视频配乐服务只需实现 ``is_enabled`` 和 ``generate_bgm``。供应商差异集中在
 # 文件扩展名、领域异常和 WebUI 警告代码；任务编排、0 音量短路及失败降级
 # 全部复用同一路径，避免后续新增供应商时维护多份相似流程。
 _VIDEO_MUSIC_PROVIDERS = {
+    "gemini": {
+        "service": gemini_music,
+        "error_type": gemini_music.GeminiMusicError,
+        "suffix": ".wav",
+        "warning_code": "gemini_bgm_failed",
+        "display_name": "Gemini AI Music",
+    },
     "sonilo": {
         "service": sonilo,
         "error_type": sonilo.SoniloError,
@@ -1215,18 +1224,22 @@ def _run_cross_post(
             )
 
         for video_path in video_paths:
-            result = upload_post.cross_post_video(
-                video_path=video_path,
-                title=post_title,
-                platforms=list(platforms),
-                youtube_extra=youtube_extra,
-            )
-            if not isinstance(result, dict):
-                result = {
-                    "success": False,
-                    "error": "Upload-Post returned an invalid response",
-                }
-            results.append(result)
+            if platforms:
+                result = upload_post.cross_post_video(
+                    video_path=video_path,
+                    title=post_title,
+                    platforms=list(platforms),
+                    youtube_extra=youtube_extra,
+                )
+                if not isinstance(result, dict):
+                    result = {
+                        "success": False,
+                        "error": "Upload-Post returned an invalid response",
+                    }
+                results.append(result)
+            if getattr(params, "buffer_publish", False) or config.app.get("buffer_enabled", False):
+                buf_res = buffer_publisher.publish_video(video_path=video_path, text=post_title)
+                results.append(buf_res)
 
         failures = [result for result in results if not result.get("success")]
         if failures:
@@ -1650,11 +1663,12 @@ def _run_pipeline(
         upload_post.upload_post_service.is_configured()
         and upload_post.upload_post_service.auto_upload
     )
+    buffer_requested = getattr(params, "buffer_publish", False) or config.app.get("buffer_enabled", False)
     platforms = (
         list(upload_post.upload_post_service.platforms) if cross_post_enabled else []
     )
-    should_cross_post = cross_post_enabled and bool(platforms)
-    if cross_post_enabled and not platforms:
+    should_cross_post = (cross_post_enabled and bool(platforms)) or buffer_requested
+    if cross_post_enabled and not platforms and not buffer_requested:
         logger.warning(
             f"skip cross-post because no platforms are configured, task_id: {task_id}"
         )

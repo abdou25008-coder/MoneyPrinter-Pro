@@ -147,7 +147,7 @@ VIDEO_SOURCE_GROUPS = {
         "wavespeed",
         "muapi",
     ),
-    "ai_image": ("openai_image",),
+    "ai_image": ("pollinations", "gemini_imagen", "openai_image"),
     "local": ("local",),
 }
 # Upload-Post 的 API Key 与发布用户分别在两个页面管理，并且发布用户名称
@@ -3251,6 +3251,28 @@ def _render_settings_dialog():
                 if isinstance(made_for_kids, bool):
                     _set_runtime_config("app", "upload_post_youtube_made_for_kids", made_for_kids)
 
+            st.divider()
+            st.markdown(f"### {tr('Buffer Social Media Auto-Publish')}")
+            st.caption(tr("Connect Buffer to auto-publish videos to Instagram Reels, TikTok, YouTube Shorts, Facebook, and LinkedIn."))
+            buf_enabled = config.app.get("buffer_enabled", False)
+            buf_enabled_val = st.checkbox(
+                tr("Enable Buffer Auto-Publish"),
+                value=buf_enabled,
+                key="buffer_enabled_checkbox",
+            )
+            if buf_enabled_val != buf_enabled:
+                _set_runtime_config("app", "buffer_enabled", buf_enabled_val)
+
+            buf_token = st.text_input(
+                tr("Buffer Access Token"),
+                value=config.app.get("buffer_access_token", ""),
+                type="password",
+                help=tr("Generate your access token from Buffer Developer Portal: buffer.com/developers/apps"),
+                key="buffer_access_token_input",
+            )
+            if buf_token != config.app.get("buffer_access_token", ""):
+                _set_runtime_config("app", "buffer_access_token", buf_token)
+
         # 左侧面板 - 日志设置
         with left_config_panel:
             hide_log = st.checkbox(
@@ -4565,6 +4587,7 @@ def _render_local_script_generation(params):
     with st.spinner(tr("Generating Video Script and Keywords")):
 
         def generate_script_and_terms(app_config_snapshot):
+            target_dur = getattr(params, "video_target_duration", 0) or 0
             script = llm.generate_script(
                 video_subject=params.video_subject,
                 language=params.video_language,
@@ -4572,6 +4595,7 @@ def _render_local_script_generation(params):
                 video_script_prompt=params.video_script_prompt,
                 custom_system_prompt=params.custom_system_prompt,
                 app_config=app_config_snapshot,
+                target_duration=target_dur,
             )
             terms = llm.generate_terms(
                 params.video_subject,
@@ -4579,6 +4603,7 @@ def _render_local_script_generation(params):
                 amount=8 if params.match_materials_to_script else 5,
                 match_script_order=params.match_materials_to_script,
                 app_config=app_config_snapshot,
+                target_duration=target_dur,
             )
             return script, terms
 
@@ -5070,6 +5095,29 @@ def _render_script_settings(panel, params):
                             )
                         )
 
+            # مدة الفيديو الإجمالية (Video Target Duration)
+            duration_options = [
+                (tr("Auto (Based on Paragraphs)"), 0),
+                (tr("30 Seconds (Shorts / Reels)"), 30),
+                (tr("60 Seconds (Full Short / TikTok)"), 60),
+                (tr("90 Seconds (1.5 Minutes)"), 90),
+                (tr("120 Seconds (2 Minutes)"), 120),
+                (tr("180 Seconds (3 Minutes)"), 180),
+                (tr("300 Seconds (5 Minutes)"), 300),
+            ]
+            selected_duration = stable_selectbox(
+                tr("Target Video Duration"),
+                options=[val for _, val in duration_options],
+                default_value=st.session_state.get(
+                    "video_target_duration", getattr(params, "video_target_duration", 0) or 0
+                ),
+                key="video_target_duration_select",
+                format_func=lambda v: dict((val, label) for label, val in duration_options).get(v, str(v)),
+                help=tr("Controls script word count, speaking pacing, and total scene count."),
+            )
+            params.video_target_duration = int(selected_duration)
+            st.session_state["video_target_duration"] = params.video_target_duration
+
             # 模型发现只增强视频素材，不改变用户明确选择的文案 Provider。
             if _effective_script_generation_backend() == "loomloom":
                 _render_loomloom_script_generation(params)
@@ -5104,6 +5152,7 @@ def _render_script_settings(panel, params):
                                 amount=8 if params.match_materials_to_script else 5,
                                 match_script_order=params.match_materials_to_script,
                                 app_config=app_config_snapshot,
+                                target_duration=params.video_target_duration,
                             ),
                         )
                         if "Error: " in terms:
@@ -5150,6 +5199,8 @@ def _render_video_settings(panel, params):
                 "metaso_minimax": tr("Metaso MiniMax H3"),
                 "muapi": tr("MuAPI AI Video"),
                 "loomloom": tr("Shengsuan Cloud AI Video"),
+                "pollinations": tr("Pollinations AI (Free Unlimited Images)"),
+                "gemini_imagen": tr("Google Gemini Imagen 3"),
                 "openai_image": tr("OpenAI Compatible Text-to-Image"),
                 "local": tr("Local file"),
             }
@@ -5180,6 +5231,10 @@ def _render_video_settings(panel, params):
                     _effective_loomloom_api_token()
                 )
 
+            if params.video_source == "pollinations":
+                st.caption(tr("100% Free AI Image Generation powered by FLUX / Pollinations - no API key required!"))
+            if params.video_source == "gemini_imagen":
+                st.caption(tr("High-Definition Image Generation using Google Gemini Imagen 3 and your Gemini API key."))
             if params.video_source == "wavespeed":
                 st.caption(tr("WaveSpeed AI Video Help"))
             if params.video_source == "volcengine_seedance":
@@ -5272,6 +5327,25 @@ def _render_video_settings(panel, params):
                 "video_transition_mode",
                 params.video_transition_mode.value,
             )
+
+            # مؤثرات صوتية انتقالية سينمائية (Transition SFX)
+            params.sfx_enabled = st.checkbox(
+                tr("Enable Cinematic Transition SFX (Whoosh / Sub-drop)"),
+                value=st.session_state.get("sfx_enabled", getattr(params, "sfx_enabled", True)),
+                help=tr("Synthesizes cinematic whooshes, sub-bass impacts, and tension risers synchronized at scene cuts."),
+                key="sfx_enabled_toggle",
+            )
+            st.session_state["sfx_enabled"] = params.sfx_enabled
+            if params.sfx_enabled:
+                params.sfx_volume = st.slider(
+                    tr("Transition SFX Volume"),
+                    min_value=0.05,
+                    max_value=1.0,
+                    value=float(st.session_state.get("sfx_volume", getattr(params, "sfx_volume", 0.35))),
+                    step=0.05,
+                    key="sfx_volume_slider",
+                )
+                st.session_state["sfx_volume"] = params.sfx_volume
 
             video_aspect_ratios = [
                 (tr("Portrait"), VideoAspect.portrait.value),
@@ -6527,6 +6601,7 @@ def _render_background_music_settings(params, elevenlabs_api_key_rendered=False)
         (tr("Custom Background Music"), "custom"),
         (tr("Sonilo Background Music"), "sonilo"),
         (tr("ElevenLabs Background Music"), "elevenlabs"),
+        (tr("Gemini AI Smart Music (Adaptive BGM)"), "gemini"),
     ]
     selected_bgm_type = stable_selectbox(
         tr("Background Music Source"),
@@ -6541,7 +6616,9 @@ def _render_background_music_settings(params, elevenlabs_api_key_rendered=False)
     )
     params.bgm_type = selected_bgm_type
     _set_runtime_config("ui", "bgm_type", params.bgm_type)
-    if params.bgm_type == "sonilo":
+    if params.bgm_type == "gemini":
+        st.caption(tr("Automatically analyzes script narrative with Google Gemini and synthesizes atmospheric background music tuned to your story."))
+    elif params.bgm_type == "sonilo":
         configured_key = str(config.app.get("sonilo_api_key", "") or "").strip()
         effective_key = configured_key or os.getenv("SONILO_API_KEY", "").strip()
         entered_key = st.text_input(
@@ -6573,6 +6650,16 @@ def _render_background_music_settings(params, elevenlabs_api_key_rendered=False)
         disabled=not params.bgm_type,
     )
     _set_runtime_config("ui", "bgm_volume", params.bgm_volume)
+
+    params.bgm_ducking = st.checkbox(
+        tr("Auto-ducking (Lower BGM volume when voiceover speaks)"),
+        value=st.session_state.get("bgm_ducking", getattr(params, "bgm_ducking", True)),
+        help=tr("Intelligently ducks background music under the narrator's voice for crystal clear speech."),
+        key="bgm_ducking_checkbox",
+        disabled=not params.bgm_type,
+    )
+    st.session_state["bgm_ducking"] = params.bgm_ducking
+
     bgm_enabled = bgm_service.should_use_bgm(params.bgm_type, params.bgm_volume)
 
     if params.bgm_type == "custom":
@@ -7882,6 +7969,13 @@ def _render_generation_controls(
 
     _render_settings_transfer(params)
 
+    if config.app.get("buffer_enabled", False):
+        params.buffer_publish = st.checkbox(
+            tr("Auto-publish to Buffer (Social Media)"),
+            value=st.session_state.get("buffer_publish_toggle", True),
+            key="buffer_publish_toggle",
+        )
+
     start_button = st.button(
         tr("Generate Video"),
         use_container_width=True,
@@ -7941,10 +8035,19 @@ def _render_generation_controls(
             "muapi",
             "loomloom",
             "openai_image",
+            "pollinations",
+            "gemini_imagen",
             "local",
         ]:
             _remove_active_generation_task(task_id)
             st.error(tr("Please Select a Valid Video Source"))
+            st.stop()
+
+        if params.video_source == "gemini_imagen" and not (
+            config.gemini.get("api_key") or os.environ.get("GEMINI_API_KEY")
+        ):
+            _remove_active_generation_task(task_id)
+            st.error(tr("Please Configure the Gemini API Key First"))
             st.stop()
 
         if params.video_source == "pexels" and not config.app.get(

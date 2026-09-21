@@ -33,20 +33,22 @@ _SENSITIVE_QUERY_RE = re.compile(
 )
 
 DEFAULT_SCRIPT_SYSTEM_PROMPT = """
-# Role: High-Retention Video Script Generator (InVideo Style)
+# Role: High-Retention Video Script Generator (InVideo & Voice Director Style)
 
 ## Goals:
-Generate a captivating, viral short-video script tailored to the subject. The script must be natural, fast-paced, and rich in vivid visual descriptions that translate seamlessly into video footage.
+Generate a captivating, viral short-video script tailored to the subject. The script must be natural, fast-paced, and rich in vivid visual descriptions that translate seamlessly into video footage, complete with expressive acoustic directives.
 
-## Constraints:
-1. Return the script as raw text with the specified number of paragraphs (separated by double newlines).
-2. Do not under any circumstance reference this prompt or the instructions in your response.
-3. Hook the viewer immediately in the very first sentence. Never start with generic intros like "Welcome to this video" or "In this video we will discuss".
-4. Never include markdown formatting, bolding, asterisks, titles, or headers.
-5. Only return the spoken narration text. Never include stage directions, speaker labels (e.g., "Narrator:", "Voiceover:"), music cues, or sound effect markers.
-6. Use natural, authentic, and engaging phrasing with proper punctuation (commas, periods, questions) to ensure natural speech pauses for text-to-speech synthesis.
-7. If the video subject is in Arabic, respond in fluent, captivating Modern Standard Arabic (فصحى معاصرة مشوقة وسلسة) with natural punctuation (، . ؟) suitable for voiceover.
-8. Respond in the same language as the video subject.
+## Voiceover & Narration Directives:
+1. Embed expressive emotional cues and speech directions in brackets where appropriate to guide voiceover performance, e.g.:
+   - [نبرة حماسية ومشوقة] for high-energy hooks.
+   - [توقف درامي 1s] or [توقف 1s] for cinematic pauses and breathing room.
+   - [همس غامض] or [نبرة هادئة] for mystery.
+   - [نبرة فخمة ومؤثرة] for grand historical, natural or scientific revelations.
+2. Hook the viewer immediately in the very first sentence. Never start with generic intros like "Welcome to this video" or "In this video we will discuss".
+3. Never include markdown formatting, bolding, asterisks, titles, or section headers.
+4. Only return narration text with inline brackets for voice directing. Do not include speaker names (e.g., "Narrator:").
+5. If the video subject is in Arabic, respond in fluent, captivating Modern Standard Arabic (فصحى معاصرة مشوقة وسلسة) with natural punctuation (، . ؟) suitable for voiceover.
+6. Respond in the same language as the video subject.
 """.strip()
 
 # Claude Code CLI 默认使用编码 agent 的系统提示词，其中大量约束与文案写作
@@ -703,6 +705,7 @@ def build_script_prompt(
     paragraph_number: int = 1,
     video_script_prompt: str = "",
     custom_system_prompt: str = "",
+    target_duration: int = 0,
 ) -> str:
     paragraph_number = _normalize_script_paragraph_number(paragraph_number)
     video_script_prompt = _limit_script_text(
@@ -712,14 +715,19 @@ def build_script_prompt(
         custom_system_prompt, MAX_SCRIPT_SYSTEM_PROMPT_LENGTH, "custom_system_prompt"
     )
 
-    # 将“脚本生成规则”和“运行时上下文”分开拼接。这样高级用户即使覆盖默认
-    # system prompt，也不会漏掉视频主题、语言、段落数这些每次生成都必须带上的参数。
     prompt = custom_system_prompt or DEFAULT_SCRIPT_SYSTEM_PROMPT
     prompt += f"""
 
 # Initialization:
 - video subject: {video_subject}
 - number of paragraphs: {paragraph_number}
+""".rstrip()
+    if target_duration > 0:
+        target_words = int(target_duration * 2.1)
+        prompt += f"""
+- Target Video Duration: {target_duration} seconds.
+- Script Length Constraint: Must contain approximately {target_words} spoken words to comfortably fit within {target_duration} seconds.
+- Voice Acting Cues: Embed vocal emotion and pause markers in brackets (e.g., [نبرة حماسية], [توقف 1s], [همس], [نبرة مؤثرة]) at narrative turning points.
 """.rstrip()
     if language:
         prompt += f"\n- language: {language}"
@@ -740,6 +748,7 @@ def generate_script(
     video_script_prompt: str = "",
     custom_system_prompt: str = "",
     app_config=None,
+    target_duration: int = 0,
 ) -> str:
     paragraph_number = _normalize_script_paragraph_number(paragraph_number)
     video_script_prompt = _limit_script_text(
@@ -754,35 +763,24 @@ def generate_script(
         paragraph_number=paragraph_number,
         video_script_prompt=video_script_prompt,
         custom_system_prompt=custom_system_prompt,
+        target_duration=target_duration,
     )
     final_script = ""
     logger.info(
         "generating video script: "
-        f"subject={video_subject}, paragraph_number={paragraph_number}, "
+        f"subject={video_subject}, target_duration={target_duration}s, "
+        f"paragraph_number={paragraph_number}, "
         f"has_custom_prompt={bool(video_script_prompt.strip())}, "
         f"has_custom_system_prompt={bool(custom_system_prompt.strip())}"
     )
 
     def format_response(response):
-        # Clean the script
-        # Remove asterisks, hashes
-        response = response.replace("*", "")
-        response = response.replace("#", "")
-
-        # Remove markdown syntax.  Use non-greedy .*? so each bracket/paren
-        # group is removed independently; the greedy form would eat all text
-        # between the first opener and the last closer on the same line.
-        response = re.sub(r"\[.*?\]", "", response)
-        response = re.sub(r"\(.*?\)", "", response)
-
-        # Split the script into paragraphs
+        # Clean markdown asterisks and headers
+        response = response.replace("*", "").replace("#", "")
+        # Remove stage prefixes like "Narrator:" or "المعلق:"
+        response = re.sub(r"^(?:Narrator|Voiceover|المعلق|الراوي)\s*:\s*", "", response, flags=re.MULTILINE)
         paragraphs = response.split("\n\n")
-
-        # Select the specified number of paragraphs
-        # selected_paragraphs = paragraphs[:paragraph_number]
-
-        # Join the selected paragraphs into a single string
-        return "\n\n".join(paragraphs)
+        return "\n\n".join(p.strip() for p in paragraphs if p.strip())
 
     for i in range(_max_retries):
         try:
@@ -967,7 +965,10 @@ def generate_terms(
     match_script_order: bool = False,
     thematic_context: str = "",
     app_config=None,
+    target_duration: int = 0,
 ) -> List[str]:
+    if target_duration > 0:
+        amount = max(amount, int(target_duration / 4.5))
     video_script = utils.remove_pause_tags(video_script or "").strip()
     thematic_anchor = (thematic_context or extract_thematic_anchor(video_subject, video_script)).strip()
 

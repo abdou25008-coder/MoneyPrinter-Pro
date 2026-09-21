@@ -322,12 +322,18 @@ def split_string_by_punctuations(s):
 
 PAUSE_TAG_KEYWORDS = (
     r"pause|pausa|silence|silencio|silêncio|silenzio|stille|"
-    r"пауза|тишина|停顿|暂停|静音|ポーズ|一時停止|無音|일시중지|정지"
+    r"пауза|тишина|停顿|暂停|静音|ポーズ|一時停止|無音|일시중지|정지|"
+    r"توقف|وقفة|صمت|انتظار"
 )
 # 匹配所有包含停顿关键词的标签（方括号或圆括号），无论其参数合法与否均匹配，
 # 以确保非法标签（如 [pause: -2s]、[pause: nope]、[pause: 0s]）在合成前被彻底清除而不会泄漏给 TTS
 PAUSE_TAG_PATTERN = re.compile(
     rf"[\[\(]\s*(?:{PAUSE_TAG_KEYWORDS})\b(?:\s*[:：]?\s*([^\]\)]*?))?\s*[\]\)]",
+    re.IGNORECASE,
+)
+
+VOICE_DIRECTION_PATTERN = re.compile(
+    r"[\[\(]\s*(?:نبرة|مشاعر|صوت|همس|حماس|غموض|هدوء|tone|whisper|emotion|acting|dramatic|voice)\b[^\]\)]*?[\]\)]",
     re.IGNORECASE,
 )
 
@@ -348,14 +354,12 @@ def has_pause_tags(text: str) -> bool:
 
 def remove_pause_tags(text: str) -> str:
     """
-    移除脚本文本中的所有停顿/暂停标签（包括有效与无效标签）。
-
-    在字幕分句、LLM关键词提取或作为发音文本传递给 TTS 时，必须将此类非发音标记清除，
-    避免非法或未处理的标签被朗读或作为视觉搜索词。
+    移除脚本文本中的所有停顿/暂停标签以及声音情绪指令标签。
     """
     if not text:
         return ""
     cleaned = PAUSE_TAG_PATTERN.sub(" ", text)
+    cleaned = VOICE_DIRECTION_PATTERN.sub(" ", cleaned)
     # 合并连续水平空格，保留换行
     cleaned = re.sub(r"[ \t]+", " ", cleaned)
     return cleaned.strip()
@@ -364,18 +368,12 @@ def remove_pause_tags(text: str) -> str:
 def parse_script_with_pauses(text: str) -> list[tuple[str, Any]]:
     """
     解析脚本中的文本与停顿标签。
-
-    连续停顿标签会自动合并为一个停顿段；
-    非法标签（如非数字参数、小于等于 0 的时长）会被直接移除并忽略，绝不会作为台词传给 TTS；
-    小于 MIN_PAUSE_DURATION_SECONDS (0.1s/100ms) 的过小停顿会被校验并提升至 0.1s；
-    超过 MAX_PAUSE_DURATION_SECONDS (10.0s) 的过长停顿会被限制在安全上限内。
-
-    Returns:
-        有序元组列表，形式为 [("speech", "文案"), ("pause", 2.0), ...]
     """
     if not text:
         return []
 
+    # Clean out emotion/acting directives before parsing pauses
+    text = VOICE_DIRECTION_PATTERN.sub(" ", text)
     segments: list[tuple[str, Any]] = []
     last_idx = 0
 

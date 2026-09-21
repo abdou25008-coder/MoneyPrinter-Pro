@@ -484,3 +484,73 @@ div[class*="st-key-task_row_"] button[kind="secondary"] p {
         min-width: 1.75rem !important;
     }
 }
+
+/* ==========================================================================
+   Responsive Mobile & Tablet Layout (قالب متجاوب ومريح للجوال والكمبيوتر)
+   ========================================================================== */
+
+/* بطاقات الإعدادات الرئيسية الأربع - تحويل انسيابي للأجهزة الذكية والشاشات الصغيرة */
+@media screen and (max-width: 1024px) {
+    div[class*="st-key-main_settings_grid"] > div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"] {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 1rem !important;
+    }
+
+    div[class*="st-key-main_settings_grid"] div[data-testid="stColumn"] {
+        width: 100% !important;
+        min-width: 100% !important;
+        max-width: 100% !important;
+        flex: 1 1 100% !important;
+    }
+
+    /* تحسين مساحات اللمس على الجوال */
+    button[kind="primary"],
+    button[kind="secondary"],
+    button[data-testid="baseButton-primary"] {
+        min-height: 44px !important;
+        font-size: 1rem !important;
+        font-weight: 600 !important;
+        border-radius: 8px !important;
+    }
+
+    .stTextArea textarea,
+    .stTextInput input,
+    .stSelectbox div[data-baseweb="select"] {
+        font-size: 0.95rem !important;
+    }
+}
+
+/* تحسينات التصميم العام والبطاقات المريحة للعين */
+div[data-testid="stVerticalBlock"] > div[data-testid="stElementContainer"] > div[data-testid="stVerticalBlockBorderWrapper"] {
+    border-radius: 12px !important;
+    border: 1px solid rgba(128, 128, 128, 0.18) !important;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04) !important;
+    transition: box-shadow 0.2s ease, border-color 0.2s ease !important;
+}
+
+div[data-testid="stVerticalBlock"] > div[data-testid="stElementContainer"] > div[data-testid="stVerticalBlockBorderWrapper"]:hover {
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08) !important;
+    border-color: rgba(99, 102, 241, 0.35) !important;
+}
+
+/* تحسين زر التوليد الرئيسي */
+button[data-testid="baseButton-primary"] {
+    background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%) !important;
+    color: #ffffff !important;
+    border: none !important;
+    box-shadow: 0 4px 14px rgba(79, 70, 229, 0.35) !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.02em !important;
+    transition: transform 0.15s ease, box-shadow 0.15s ease !important;
+}
+
+button[data-testid="baseButton-primary"]:hover {
+    transform: translateY(-1px) !important;
+    box-shadow: 0 6px 20px rgba(79, 70, 229, 0.5) !important;
+}
+
+button[data-testid="baseButton-primary"]:active {
+    transform: translateY(1px) !important;
+}
+

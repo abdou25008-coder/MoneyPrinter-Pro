@@ -1590,6 +1590,54 @@ def _download_videos_openai_image_on_demand(
     return video_paths
 
 
+def _download_videos_free_image_on_demand(
+    *,
+    task_id: str,
+    provider: str,
+    search_terms: List[str],
+    video_aspect: VideoAspect,
+    audio_duration: float,
+    max_clip_duration: int,
+    material_directory: str,
+) -> List[str]:
+    """
+    Generates AI images on-demand via Pollinations.ai (free FLUX) or Gemini Imagen 3,
+    and renders each into an animated video clip.
+    """
+    from app.services import free_image
+    if not material_directory:
+        material_directory = utils.task_dir(task_id)
+
+    video_paths: List[str] = []
+    material_sources: list[dict[str, Any]] = []
+    total_duration = 0.0
+
+    aspect = VideoAspect(video_aspect)
+    aspect_str = "9:16" if aspect == VideoAspect.portrait else "16:9"
+
+    for search_term in search_terms:
+        if total_duration >= audio_duration:
+            break
+        try:
+            image_path = free_image.generate_image_by_provider(
+                provider=provider,
+                prompt=search_term,
+                aspect=aspect_str,
+            )
+            if image_path and os.path.exists(image_path):
+                clip_file = _render_openai_image_video(image_path, max_clip_duration)
+                if clip_file and os.path.exists(clip_file):
+                    video_paths.append(clip_file)
+                    total_duration += max_clip_duration
+                    logger.info(f"{provider} image clip rendered: {clip_file}, accumulated {total_duration:.1f}s")
+        except Exception as e:
+            logger.warning(f"{provider} image generation failed for '{search_term}': {e}")
+
+    _persist_material_sources(task_id, material_sources)
+    return video_paths
+
+
+
 def _search_videos_with_cache(
     provider: str,
     search_videos: Callable[..., List[MaterialInfo]],
@@ -1789,6 +1837,16 @@ def download_videos(
         # 供应商客户端，避免协议差异渗入素材编排层。
         return _download_videos_metaso_minimax_on_demand(
             task_id=task_id,
+            search_terms=search_terms,
+            video_aspect=video_aspect,
+            audio_duration=audio_duration,
+            max_clip_duration=max_clip_duration,
+            material_directory=material_directory,
+        )
+    if source in ("pollinations", "gemini_imagen"):
+        return _download_videos_free_image_on_demand(
+            task_id=task_id,
+            provider=source,
             search_terms=search_terms,
             video_aspect=video_aspect,
             audio_duration=audio_duration,

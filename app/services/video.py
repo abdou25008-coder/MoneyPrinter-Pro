@@ -964,6 +964,13 @@ def combine_videos(
         output_dir=output_dir,
         max_duration=audio_duration,
     )
+    try:
+        import json
+        durations = [float(getattr(clip, "duration", 0.0) or 0.0) for clip in processed_clips]
+        with open(combined_video_path + ".durations.json", "w", encoding="utf-8") as dur_file:
+            json.dump(durations, dur_file)
+    except Exception as exc:
+        logger.debug(f"could not save clip durations: {exc}")
     if used_video_paths is not None:
         # Exclude safety-margin clips that FFmpeg trims entirely from the output.
         elapsed = 0.0
@@ -1510,11 +1517,49 @@ def generate_video(
                     bgm_file=params.bgm_file,
                 )
             )
+        # Transition sound design (Whoosh / Sub-drop)
+        sfx_clips = []
+        if getattr(params, "sfx_enabled", True):
+            try:
+                from app.services import sfx as sfx_service
+                durations_path = video_path + ".durations.json"
+                clip_durations = []
+                if os.path.exists(durations_path):
+                    import json
+                    with open(durations_path, "r", encoding="utf-8") as dur_file:
+                        clip_durations = json.load(dur_file)
+                    try:
+                        os.remove(durations_path)
+                    except OSError:
+                        pass
+
+                if not clip_durations and getattr(video_clip, "duration", 0):
+                    num_cuts = max(1, int(video_clip.duration // 4.5))
+                    clip_durations = [video_clip.duration / (num_cuts + 1)] * (num_cuts + 1)
+
+                sfx_items = sfx_service.get_transition_sfx_clips(
+                    clip_durations, sfx_volume=getattr(params, "sfx_volume", 0.35)
+                )
+                for item in sfx_items:
+                    if os.path.exists(item["file"]) and item["start_time"] < video_clip.duration:
+                        sfx_source = clip_stack.enter_context(AudioFileClip(item["file"]))
+                        sfx_clip = sfx_source.with_start(item["start_time"]).with_effects(
+                            [afx.MultiplyVolume(item["volume"])]
+                        )
+                        sfx_clips.append(sfx_clip)
+            except Exception as sfx_err:
+                logger.warning(f"Failed to generate/mix transition SFX: {sfx_err}")
+
         bgm_mix_succeeded = True
         if bgm_file:
             try:
+                effective_bgm_vol = params.bgm_volume
+                # Audio Ducking: lower music level when voice is present so speech stays crisp
+                if getattr(params, "bgm_ducking", True) and audio_path and os.path.exists(audio_path):
+                    effective_bgm_vol = max(0.02, params.bgm_volume * 0.4)
+
                 bgm_effects = [
-                    afx.MultiplyVolume(params.bgm_volume),
+                    afx.MultiplyVolume(effective_bgm_vol),
                     afx.AudioFadeOut(3),
                 ]
                 # 服务内解析的随机/自定义音乐可能比成片短，需要循环铺满；任务层
@@ -1524,7 +1569,7 @@ def generate_video(
                     bgm_effects.append(afx.AudioLoop(duration=video_clip.duration))
                 bgm_source_clip = clip_stack.enter_context(AudioFileClip(bgm_file))
                 bgm_clip = bgm_source_clip.with_effects(bgm_effects)
-                audio_clip = CompositeAudioClip([audio_clip, bgm_clip])
+                audio_clip = CompositeAudioClip([audio_clip, *sfx_clips, bgm_clip])
             except Exception:
                 bgm_mix_succeeded = False
                 # 记录完整堆栈和稳定上下文，便于区分文件解码、MoviePy 特效和
@@ -1533,6 +1578,8 @@ def generate_video(
                     f"failed to mix background music: type={params.bgm_type}, "
                     f"file={bgm_file}"
                 )
+        elif sfx_clips:
+            audio_clip = CompositeAudioClip([audio_clip, *sfx_clips])
 
         final_video_clip = video_clip.with_audio(audio_clip)
         clip_stack.callback(final_video_clip.close)

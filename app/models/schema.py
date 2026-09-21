@@ -115,8 +115,10 @@ class VideoParams(BaseModel):
     video_clip_speed: Optional[float] = 1.0
     match_materials_to_script: bool = False
     video_count: int = Field(default=1, ge=1)
+    video_target_duration: int = Field(default=0, ge=0)  # Target duration in seconds (0=auto, 30, 60, 90, 120, 180, 300)
 
     video_source: Optional[str] = "pexels"
+    image_provider: Optional[str] = "pollinations"  # pollinations, gemini_imagen
     video_materials: Optional[List[MaterialInfo]] = (
         None  # Materials used to generate the video
     )
@@ -132,6 +134,10 @@ class VideoParams(BaseModel):
     bgm_type: Optional[str] = "random"
     bgm_file: Optional[str] = ""
     bgm_volume: Optional[float] = 0.2
+    bgm_ducking: bool = True  # Auto-ducking BGM under voiceover
+    sfx_enabled: bool = True  # Sound effects at scene transitions
+    sfx_volume: float = 0.3   # SFX volume
+    buffer_publish: bool = False  # Publish via Buffer
     # 视频配乐供应商共用提示词，WebUI 新任务统一写入该字段。保留下面的
     # Sonilo 专用字段以兼容旧任务记录和现有 CLI 参数。
     video_music_prompt: str = Field(default="", max_length=2000)
