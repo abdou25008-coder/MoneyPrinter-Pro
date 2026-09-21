@@ -89,6 +89,10 @@ class MaterialInfo:
 
 
 class VideoParams(BaseModel):
+    model_config = {"extra": "allow"}
+
+    class Config:
+        extra = "allow"
     """
     {
       "video_subject": "",
