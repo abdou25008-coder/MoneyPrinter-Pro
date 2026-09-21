@@ -22,14 +22,7 @@ from streamlit_tour import Tour
 
 # WebUI 作为独立入口运行时，需要让项目根目录优先于第三方依赖，
 # 避免依赖中的同名 app 包遮蔽 MoneyPrinterTurbo 自己的 app 包。
-_file_dir = os.path.dirname(os.path.realpath(__file__))
-if os.path.basename(_file_dir) == "webui":
-    root_dir = os.path.dirname(_file_dir)
-    webui_dir = _file_dir
-else:
-    root_dir = _file_dir
-    webui_dir = os.path.join(root_dir, "webui")
-
+root_dir = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 if root_dir in sys.path:
     sys.path.remove(root_dir)
 sys.path.insert(0, root_dir)
@@ -92,21 +85,14 @@ st.set_page_config(
 # MoneyPrinterTurbo 是面向终端用户的本地工具，这些入口会造成顶部大块空白，
 # 也会让新用户误以为需要安装额外组件。这里统一隐藏 Streamlit 平台工具栏，
 # 并压缩主容器顶部留白，只保留项目自己的标题、语言选择和业务设置区域。
-style_file = Path(webui_dir) / "styles.css"
-if not style_file.exists():
-    style_file = Path(root_dir) / "styles.css"
-if not style_file.exists():
-    style_file = Path(__file__).with_name("styles.css")
-
-if style_file.exists():
-    streamlit_style = f"<style>{style_file.read_text(encoding='utf-8')}</style>"
-    st.markdown(streamlit_style, unsafe_allow_html=True)
-
+style_file = Path(__file__).with_name("styles.css")
+streamlit_style = f"<style>{style_file.read_text(encoding='utf-8')}</style>"
+st.markdown(streamlit_style, unsafe_allow_html=True)
 # 定义资源目录
 font_dir = os.path.join(root_dir, "resource", "fonts")
 song_dir = os.path.join(root_dir, "resource", "songs")
-i18n_dir = os.path.join(webui_dir, "i18n") if os.path.exists(os.path.join(webui_dir, "i18n")) else os.path.join(root_dir, "webui", "i18n")
-config_file = os.path.join(webui_dir, ".streamlit", "webui.toml")
+i18n_dir = os.path.join(root_dir, "webui", "i18n")
+config_file = os.path.join(root_dir, "webui", ".streamlit", "webui.toml")
 # 语言列表必须在会话状态初始化前可用，首次访问时才能把浏览器 locale 映射到
 # 项目真正支持的语言；自动识别结果只进入当前会话，不修改全局配置。
 locales = utils.load_locales(i18n_dir)
@@ -147,7 +133,7 @@ VIDEO_SOURCE_GROUPS = {
         "wavespeed",
         "muapi",
     ),
-    "ai_image": ("pollinations", "gemini_imagen", "openai_image"),
+    "ai_image": ("openai_image",),
     "local": ("local",),
 }
 # Upload-Post 的 API Key 与发布用户分别在两个页面管理，并且发布用户名称
@@ -1834,33 +1820,26 @@ support_locales = [
 
 @st.cache_data(ttl=30, show_spinner=False)
 def get_all_fonts():
+    # 字体目录很少变化，但 Streamlit 每次控件交互都会 rerun 页面。短周期缓存
+    # 可以避免连续重复 os.walk，同时保证新增字体后最多 30 秒即可被发现。
     fonts = []
-    if os.path.exists(font_dir):
-        for root, dirs, files in os.walk(font_dir):
-            for file in files:
-                if file.endswith(".ttf") or file.endswith(".ttc"):
-                    fonts.append(file)
-    if not fonts:
-        fonts = [
-            "STHeitiMedium.ttc",
-            "Arial.ttf",
-            "DejaVuSans.ttf",
-            "NotoSansArabic.ttf",
-        ]
+    for root, dirs, files in os.walk(font_dir):
+        for file in files:
+            if file.endswith(".ttf") or file.endswith(".ttc"):
+                fonts.append(file)
     fonts.sort()
     return fonts
 
 
 @st.cache_data(ttl=30, show_spinner=False)
 def get_all_songs():
+    # 背景音乐与字体使用相同的短周期策略，不做永久缓存，兼顾 rerun 性能和
+    # 用户运行期间手动添加音乐文件的场景。
     songs = []
-    if os.path.exists(song_dir):
-        for root, dirs, files in os.walk(song_dir):
-            for file in files:
-                if file.endswith(".mp3"):
-                    songs.append(file)
-    if not songs:
-        songs = ["random"]
+    for root, dirs, files in os.walk(song_dir):
+        for file in files:
+            if file.endswith(".mp3"):
+                songs.append(file)
     return songs
 
 
@@ -2246,8 +2225,7 @@ def stable_selectbox(label, options, default_value, key, format_func=None, **kwa
     # 转换，避免翻译文案、选项顺序或上游配置变化影响选择状态。
     options = list(options)
     if not options:
-        logger.warning(f"selectbox options was empty for key: {key}, using fallback")
-        options = ["default"]
+        raise ValueError(f"selectbox options cannot be empty: {key}")
 
     if default_value not in options:
         default_value = options[0]
@@ -3250,28 +3228,6 @@ def _render_settings_dialog():
                 )
                 if isinstance(made_for_kids, bool):
                     _set_runtime_config("app", "upload_post_youtube_made_for_kids", made_for_kids)
-
-            st.divider()
-            st.markdown(f"### {tr('Buffer Social Media Auto-Publish')}")
-            st.caption(tr("Connect Buffer to auto-publish videos to Instagram Reels, TikTok, YouTube Shorts, Facebook, and LinkedIn."))
-            buf_enabled = config.app.get("buffer_enabled", False)
-            buf_enabled_val = st.checkbox(
-                tr("Enable Buffer Auto-Publish"),
-                value=buf_enabled,
-                key="buffer_enabled_checkbox",
-            )
-            if buf_enabled_val != buf_enabled:
-                _set_runtime_config("app", "buffer_enabled", buf_enabled_val)
-
-            buf_token = st.text_input(
-                tr("Buffer Access Token"),
-                value=config.app.get("buffer_access_token", ""),
-                type="password",
-                help=tr("Generate your access token from Buffer Developer Portal: buffer.com/developers/apps"),
-                key="buffer_access_token_input",
-            )
-            if buf_token != config.app.get("buffer_access_token", ""):
-                _set_runtime_config("app", "buffer_access_token", buf_token)
 
         # 左侧面板 - 日志设置
         with left_config_panel:
@@ -4587,7 +4543,6 @@ def _render_local_script_generation(params):
     with st.spinner(tr("Generating Video Script and Keywords")):
 
         def generate_script_and_terms(app_config_snapshot):
-            target_dur = getattr(params, "video_target_duration", 0) or 0
             script = llm.generate_script(
                 video_subject=params.video_subject,
                 language=params.video_language,
@@ -4595,7 +4550,6 @@ def _render_local_script_generation(params):
                 video_script_prompt=params.video_script_prompt,
                 custom_system_prompt=params.custom_system_prompt,
                 app_config=app_config_snapshot,
-                target_duration=target_dur,
             )
             terms = llm.generate_terms(
                 params.video_subject,
@@ -4603,7 +4557,6 @@ def _render_local_script_generation(params):
                 amount=8 if params.match_materials_to_script else 5,
                 match_script_order=params.match_materials_to_script,
                 app_config=app_config_snapshot,
-                target_duration=target_dur,
             )
             return script, terms
 
@@ -5095,33 +5048,6 @@ def _render_script_settings(panel, params):
                             )
                         )
 
-            # مدة الفيديو الإجمالية (Video Target Duration)
-            duration_options = [
-                (tr("Auto (Based on Paragraphs)"), 0),
-                (tr("30 Seconds (Shorts / Reels)"), 30),
-                (tr("60 Seconds (Full Short / TikTok)"), 60),
-                (tr("90 Seconds (1.5 Minutes)"), 90),
-                (tr("120 Seconds (2 Minutes)"), 120),
-                (tr("180 Seconds (3 Minutes)"), 180),
-                (tr("300 Seconds (5 Minutes)"), 300),
-            ]
-            selected_duration = stable_selectbox(
-                tr("Target Video Duration"),
-                options=[val for _, val in duration_options],
-                default_value=st.session_state.get(
-                    "video_target_duration", getattr(params, "video_target_duration", 0) or 0
-                ),
-                key="video_target_duration_select",
-                format_func=lambda v: dict((val, label) for label, val in duration_options).get(v, str(v)),
-                help=tr("Controls script word count, speaking pacing, and total scene count."),
-            )
-            target_dur_val = int(selected_duration)
-            st.session_state["video_target_duration"] = target_dur_val
-            try:
-                params.video_target_duration = target_dur_val
-            except Exception:
-                pass
-
             # 模型发现只增强视频素材，不改变用户明确选择的文案 Provider。
             if _effective_script_generation_backend() == "loomloom":
                 _render_loomloom_script_generation(params)
@@ -5156,7 +5082,6 @@ def _render_script_settings(panel, params):
                                 amount=8 if params.match_materials_to_script else 5,
                                 match_script_order=params.match_materials_to_script,
                                 app_config=app_config_snapshot,
-                                target_duration=params.video_target_duration,
                             ),
                         )
                         if "Error: " in terms:
@@ -5174,18 +5099,13 @@ def _render_script_settings(panel, params):
                 help=tr("Video Keywords Help"),
                 key="video_terms",
             )
-            thematic_val = st.text_input(
+            params.thematic_anchor = st.text_input(
                 tr("Thematic Visual Anchor (InVideo Style)"),
                 value=st.session_state.get("thematic_anchor", getattr(params, "thematic_anchor", "") or ""),
                 placeholder=tr("Auto-detected (e.g., deep sea underwater, outer space galaxy, desert dunes)"),
                 help=tr("Enforces strict visual cohesion across all stock clips, matching InVideo's scene-consistency engine."),
                 key="thematic_anchor",
             )
-            st.session_state["thematic_anchor"] = thematic_val
-            try:
-                params.thematic_anchor = thematic_val
-            except Exception:
-                pass
 
 
 def _render_video_settings(panel, params):
@@ -5208,8 +5128,6 @@ def _render_video_settings(panel, params):
                 "metaso_minimax": tr("Metaso MiniMax H3"),
                 "muapi": tr("MuAPI AI Video"),
                 "loomloom": tr("Shengsuan Cloud AI Video"),
-                "pollinations": tr("Pollinations AI (Free Unlimited Images)"),
-                "gemini_imagen": tr("Google Gemini Imagen 3"),
                 "openai_image": tr("OpenAI Compatible Text-to-Image"),
                 "local": tr("Local file"),
             }
@@ -5240,10 +5158,6 @@ def _render_video_settings(panel, params):
                     _effective_loomloom_api_token()
                 )
 
-            if params.video_source == "pollinations":
-                st.caption(tr("100% Free AI Image Generation powered by FLUX / Pollinations - no API key required!"))
-            if params.video_source == "gemini_imagen":
-                st.caption(tr("High-Definition Image Generation using Google Gemini Imagen 3 and your Gemini API key."))
             if params.video_source == "wavespeed":
                 st.caption(tr("WaveSpeed AI Video Help"))
             if params.video_source == "volcengine_seedance":
@@ -5336,33 +5250,6 @@ def _render_video_settings(panel, params):
                 "video_transition_mode",
                 params.video_transition_mode.value,
             )
-
-            # مؤثرات صوتية انتقالية سينمائية (Transition SFX)
-            sfx_val = st.checkbox(
-                tr("Enable Cinematic Transition SFX (Whoosh / Sub-drop)"),
-                value=st.session_state.get("sfx_enabled", getattr(params, "sfx_enabled", True)),
-                help=tr("Synthesizes cinematic whooshes, sub-bass impacts, and tension risers synchronized at scene cuts."),
-                key="sfx_enabled_toggle",
-            )
-            st.session_state["sfx_enabled"] = sfx_val
-            try:
-                params.sfx_enabled = sfx_val
-            except Exception:
-                pass
-            if sfx_val:
-                sfx_vol_val = st.slider(
-                    tr("Transition SFX Volume"),
-                    min_value=0.05,
-                    max_value=1.0,
-                    value=float(st.session_state.get("sfx_volume", getattr(params, "sfx_volume", 0.35))),
-                    step=0.05,
-                    key="sfx_volume_slider",
-                )
-                st.session_state["sfx_volume"] = sfx_vol_val
-                try:
-                    params.sfx_volume = sfx_vol_val
-                except Exception:
-                    pass
 
             video_aspect_ratios = [
                 (tr("Portrait"), VideoAspect.portrait.value),
@@ -6618,7 +6505,6 @@ def _render_background_music_settings(params, elevenlabs_api_key_rendered=False)
         (tr("Custom Background Music"), "custom"),
         (tr("Sonilo Background Music"), "sonilo"),
         (tr("ElevenLabs Background Music"), "elevenlabs"),
-        (tr("Gemini AI Smart Music (Adaptive BGM)"), "gemini"),
     ]
     selected_bgm_type = stable_selectbox(
         tr("Background Music Source"),
@@ -6633,9 +6519,7 @@ def _render_background_music_settings(params, elevenlabs_api_key_rendered=False)
     )
     params.bgm_type = selected_bgm_type
     _set_runtime_config("ui", "bgm_type", params.bgm_type)
-    if params.bgm_type == "gemini":
-        st.caption(tr("Automatically analyzes script narrative with Google Gemini and synthesizes atmospheric background music tuned to your story."))
-    elif params.bgm_type == "sonilo":
+    if params.bgm_type == "sonilo":
         configured_key = str(config.app.get("sonilo_api_key", "") or "").strip()
         effective_key = configured_key or os.getenv("SONILO_API_KEY", "").strip()
         entered_key = st.text_input(
@@ -6667,20 +6551,6 @@ def _render_background_music_settings(params, elevenlabs_api_key_rendered=False)
         disabled=not params.bgm_type,
     )
     _set_runtime_config("ui", "bgm_volume", params.bgm_volume)
-
-    ducking_val = st.checkbox(
-        tr("Auto-ducking (Lower BGM volume when voiceover speaks)"),
-        value=st.session_state.get("bgm_ducking", getattr(params, "bgm_ducking", True)),
-        help=tr("Intelligently ducks background music under the narrator's voice for crystal clear speech."),
-        key="bgm_ducking_checkbox",
-        disabled=not params.bgm_type,
-    )
-    st.session_state["bgm_ducking"] = ducking_val
-    try:
-        params.bgm_ducking = ducking_val
-    except Exception:
-        pass
-
     bgm_enabled = bgm_service.should_use_bgm(params.bgm_type, params.bgm_volume)
 
     if params.bgm_type == "custom":
@@ -7990,17 +7860,6 @@ def _render_generation_controls(
 
     _render_settings_transfer(params)
 
-    if config.app.get("buffer_enabled", False):
-        buf_pub_val = st.checkbox(
-            tr("Auto-publish to Buffer (Social Media)"),
-            value=st.session_state.get("buffer_publish_toggle", True),
-            key="buffer_publish_toggle",
-        )
-        try:
-            params.buffer_publish = buf_pub_val
-        except Exception:
-            pass
-
     start_button = st.button(
         tr("Generate Video"),
         use_container_width=True,
@@ -8060,19 +7919,10 @@ def _render_generation_controls(
             "muapi",
             "loomloom",
             "openai_image",
-            "pollinations",
-            "gemini_imagen",
             "local",
         ]:
             _remove_active_generation_task(task_id)
             st.error(tr("Please Select a Valid Video Source"))
-            st.stop()
-
-        if params.video_source == "gemini_imagen" and not (
-            config.gemini.get("api_key") or os.environ.get("GEMINI_API_KEY")
-        ):
-            _remove_active_generation_task(task_id)
-            st.error(tr("Please Configure the Gemini API Key First"))
             st.stop()
 
         if params.video_source == "pexels" and not config.app.get(
