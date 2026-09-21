@@ -1834,26 +1834,33 @@ support_locales = [
 
 @st.cache_data(ttl=30, show_spinner=False)
 def get_all_fonts():
-    # 字体目录很少变化，但 Streamlit 每次控件交互都会 rerun 页面。短周期缓存
-    # 可以避免连续重复 os.walk，同时保证新增字体后最多 30 秒即可被发现。
     fonts = []
-    for root, dirs, files in os.walk(font_dir):
-        for file in files:
-            if file.endswith(".ttf") or file.endswith(".ttc"):
-                fonts.append(file)
+    if os.path.exists(font_dir):
+        for root, dirs, files in os.walk(font_dir):
+            for file in files:
+                if file.endswith(".ttf") or file.endswith(".ttc"):
+                    fonts.append(file)
+    if not fonts:
+        fonts = [
+            "STHeitiMedium.ttc",
+            "Arial.ttf",
+            "DejaVuSans.ttf",
+            "NotoSansArabic.ttf",
+        ]
     fonts.sort()
     return fonts
 
 
 @st.cache_data(ttl=30, show_spinner=False)
 def get_all_songs():
-    # 背景音乐与字体使用相同的短周期策略，不做永久缓存，兼顾 rerun 性能和
-    # 用户运行期间手动添加音乐文件的场景。
     songs = []
-    for root, dirs, files in os.walk(song_dir):
-        for file in files:
-            if file.endswith(".mp3"):
-                songs.append(file)
+    if os.path.exists(song_dir):
+        for root, dirs, files in os.walk(song_dir):
+            for file in files:
+                if file.endswith(".mp3"):
+                    songs.append(file)
+    if not songs:
+        songs = ["random"]
     return songs
 
 
@@ -2239,7 +2246,8 @@ def stable_selectbox(label, options, default_value, key, format_func=None, **kwa
     # 转换，避免翻译文案、选项顺序或上游配置变化影响选择状态。
     options = list(options)
     if not options:
-        raise ValueError(f"selectbox options cannot be empty: {key}")
+        logger.warning(f"selectbox options was empty for key: {key}, using fallback")
+        options = ["default"]
 
     if default_value not in options:
         default_value = options[0]
