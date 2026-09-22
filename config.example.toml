@@ -280,7 +280,7 @@ anthropic_model_name = ""
 # Google Gemini
 # API key: https://aistudio.google.com/app/apikey
 gemini_api_key = "AQ.Ab8RN6KmZypdW64Mq_o-6DArKZ-awH0ICtKuHu9dgsCsw-DE6w"
-gemini_model_name = ""
+gemini_model_name = "gemini-2.5-flash"
 
 # DeepSeek
 # API key: https://platform.deepseek.com/api_keys
@@ -471,9 +471,9 @@ max_queued_tasks = 100
 # Upload-Post can publish generated videos to TikTok, Instagram, and YouTube.
 # Create an account and API key at https://upload-post.com/
 # API documentation: https://docs.upload-post.com/
-upload_post_enabled = true
-upload_post_api_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbWFpbCI6ImY2MDA2ODg3QGdtYWlsLmNvbSIsImV4cCI6NDk0Mjk4NDM3OSwianRpIjoiM2MxOGI3NzYtZGRjOS00N2ZjLTg0OGMtNTIzYWZhNWY0N2ZlIn0.h4z_G2NaQm91U0LbOqs1ZpEj1itike3XB7cf7UM_6Uw"
-upload_post_username = "f6006887@gmail.com"
+upload_post_enabled = false
+upload_post_api_key = ""
+upload_post_username = ""
 # Available values: "tiktok", "instagram", "youtube".
 upload_post_platforms = ["tiktok", "instagram"]
 # Automatically publish successful video outputs after generation.
