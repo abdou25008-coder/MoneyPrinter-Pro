@@ -1994,10 +1994,15 @@ def _render_generation_task_snapshot(task_id, task):
     progress = max(0, min(100, int(task.get("progress", 0) or 0)))
     if state == const.TASK_STATE_PROCESSING:
         st.info(tr("Generating Video"))
-        st.progress(
-            progress,
-            text=f"{tr('Task Progress')}: {progress}%",
-        )
+        prog_cols = st.columns([5, 1])
+        with prog_cols[0]:
+            st.progress(
+                progress,
+                text=f"{tr('Task Progress')}: {progress}%",
+            )
+        with prog_cols[1]:
+            if st.button("🔄 " + tr("Refresh"), key=f"refresh_prog_btn_{task_id}"):
+                st.rerun(scope="fragment")
         _render_generation_logs(task_id)
         return
 
@@ -2087,7 +2092,7 @@ def _render_generation_task_snapshot(task_id, task):
         logger.info(f"{tr('Video Generation Completed')}: task_id={task_id}")
 
 
-@st.fragment(run_every=webui_task.TASK_LOG_REFRESH_INTERVAL_SECONDS)
+@st.fragment(run_every="2s")
 def _render_running_generation_task(task_id):
     """只在任务运行期间轮询；结束后切回静态结果，停止不必要的定时刷新。"""
     try:
@@ -2112,6 +2117,18 @@ def _render_running_generation_task(task_id):
 def _render_current_generation_task():
     """在生成按钮下方恢复当前页面最近提交任务的可查询 UI。"""
     task_id = st.session_state.get("current_generation_task_id", "")
+    if not task_id:
+        try:
+            tasks, _ = sm.state.get_all_tasks(1, 5)
+            for t in reversed(tasks):
+                t_state = _normalize_task_state(t.get("state"))
+                if t_state == const.TASK_STATE_PROCESSING:
+                    task_id = t.get("task_id")
+                    st.session_state["current_generation_task_id"] = task_id
+                    break
+        except Exception:
+            pass
+
     if not task_id:
         return
 
