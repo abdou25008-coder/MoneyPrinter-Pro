@@ -559,3 +559,26 @@ button[data-testid="baseButton-primary"]:active {
     transform: translateY(1px) !important;
 }
 
+/* تحسين تبويبات استوديو الإنتاج */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 8px !important;
+    background-color: rgba(128, 128, 128, 0.08) !important;
+    padding: 6px !important;
+    border-radius: 10px !important;
+    margin-bottom: 12px !important;
+}
+
+.stTabs [data-baseweb="tab"] {
+    border-radius: 8px !important;
+    padding: 8px 16px !important;
+    font-weight: 600 !important;
+    font-size: 0.92rem !important;
+    transition: all 0.2s ease !important;
+}
+
+.stTabs [aria-selected="true"] {
+    background: rgba(255, 75, 75, 0.15) !important;
+    border-color: #FF4B4B !important;
+    color: #FF4B4B !important;
+}
+

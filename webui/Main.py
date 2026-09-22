@@ -74,16 +74,13 @@ from app.utils.logging_utils import configure_terminal_logger
 from app.utils import utils
 
 st.set_page_config(
-    page_title="MoneyPrinterTurbo",
+    page_title="MoneyPrinter Pro",
     page_icon="🤖",
     layout="wide",
     initial_sidebar_state="auto",
     menu_items={
-        "Report a bug": "https://github.com/harry0703/MoneyPrinterTurbo/issues",
-        "About": "# MoneyPrinterTurbo\nSimply provide a topic or keyword for a video, and it will "
-        "automatically generate the video copy, video materials, video subtitles, "
-        "and video background music before synthesizing a high-definition short "
-        "video.\n\nhttps://github.com/harry0703/MoneyPrinterTurbo",
+        "Report a bug": "https://github.com/abdou25008-coder/MoneyPrinterTurbo-Arabic/issues",
+        "About": "# MoneyPrinter Pro\nمنصة احترافية متكاملة لإنتاج وتوليد مقاطع الفيديو والوثائقيات بالذكاء الاصطناعي.\n\nhttps://github.com/abdou25008-coder/MoneyPrinterTurbo-Arabic",
     },
 )
 
@@ -1714,12 +1711,12 @@ def _render_brand(available_update: str | None = None):
     st.markdown(
         f"""
         <h1 class="mpt-brand">
-            <span class="mpt-brand__name">MoneyPrinterTurbo</span>
+            <span class="mpt-brand__name">MoneyPrinter <span style="background: linear-gradient(135deg, #FF4B4B, #FF8533); color: white; padding: 2px 9px; border-radius: 6px; font-size: 0.85rem; font-weight: 800; letter-spacing: 0.05em; vertical-align: middle;">PRO</span></span>
             <a class="mpt-brand__version"
-               href="https://github.com/harry0703/MoneyPrinterTurbo"
+               href="https://github.com/abdou25008-coder/MoneyPrinterTurbo-Arabic"
                target="_blank"
                rel="noopener noreferrer"
-               aria-label="Open MoneyPrinterTurbo on GitHub"
+               aria-label="Open MoneyPrinter Pro on GitHub"
                title="Open project on GitHub">v{html.escape(str(config.project_version))}</a>
             {update_link}
         </h1>
@@ -8652,25 +8649,84 @@ def _render_application():
     if restore_applied or restore_succeeded:
         st.success(tr("Task Configuration Loaded"))
 
-    with st.container(key="main_settings_grid"):
-        panel = st.columns(4)
-    left_panel = panel[0]
-    middle_panel = panel[1]
-    audio_panel = panel[2]
-    right_panel = panel[3]
-
     params = VideoParams(video_subject="")
     params.match_materials_to_script = bool(
         st.session_state.get("match_materials_to_script", False)
     )
-    _render_script_settings(left_panel, params)
 
-    uploaded_files = _render_video_settings(middle_panel, params)
-    uploaded_audio_file, uploaded_bgm_file, voice_mode = _render_audio_settings(
-        audio_panel, params
-    )
+    is_ar = st.session_state.get("ui_language") == "ar"
 
-    _render_subtitle_settings(right_panel, params)
+    # خيار نمط العرض واستغلال المساحات وتوزيع التخصصات
+    col_layout_header, col_layout_switch = st.columns([3.5, 1.5], vertical_alignment="center")
+    with col_layout_header:
+        st.markdown(
+            f"""
+            <div style="font-size: 1.1rem; font-weight: 700; color: #f0f0f0; padding-bottom: 0.2rem;">
+                {'🎬 استوديو الإنتاج المتكامل (MoneyPrinter Pro Studio)' if is_ar else '🎬 Integrated Production Studio (MoneyPrinter Pro)'}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with col_layout_switch:
+        layout_mode = st.selectbox(
+            "نمط العرض" if is_ar else "Layout Mode",
+            options=["studio", "tabs", "columns"],
+            format_func=lambda m: {
+                "studio": "🎙️ استوديو متكامل (موصى به)" if is_ar else "🎙️ Studio View (Recommended)",
+                "tabs": "📑 تبويبات كاملة" if is_ar else "📑 Full Tabs",
+                "columns": "📊 أعمدة أفقية" if is_ar else "📊 4 Columns",
+            }.get(m, m),
+            key="ui_layout_mode_selector",
+            label_visibility="collapsed",
+        )
+
+    with st.container(key="main_settings_grid"):
+        if layout_mode == "studio":
+            # نمط الاستوديو المتوازن (استغلال المساحات بأعلى كفاءة: عمود للسيناريو والمحتوى، وعمود لتبويبات الإنتاج الفني)
+            script_col, studio_col = st.columns([1.15, 0.85], gap="medium")
+            with script_col:
+                _render_script_settings(script_col, params)
+            with studio_col:
+                prod_tabs = studio_col.tabs([
+                    "🎬 " + ("المشاهد والفيديو" if is_ar else "Visuals & Clips"),
+                    "🎙️ " + ("الصوت والموسيقى" if is_ar else "Voice & Audio"),
+                    "📝 " + ("الترجمة والتصميم" if is_ar else "Subtitles & Style"),
+                ])
+                with prod_tabs[0]:
+                    uploaded_files = _render_video_settings(prod_tabs[0], params)
+                with prod_tabs[1]:
+                    uploaded_audio_file, uploaded_bgm_file, voice_mode = _render_audio_settings(
+                        prod_tabs[1], params
+                    )
+                with prod_tabs[2]:
+                    _render_subtitle_settings(prod_tabs[2], params)
+
+        elif layout_mode == "tabs":
+            top_tabs = st.tabs([
+                "✍️ " + ("السيناريو والمحتوى" if is_ar else "Script & Content"),
+                "🎬 " + ("المشاهد والفيديو" if is_ar else "Visuals & Clips"),
+                "🎙️ " + ("الصوت والموسيقى" if is_ar else "Voice & Audio"),
+                "📝 " + ("الترجمة والتصميم" if is_ar else "Subtitles & Style"),
+            ])
+            with top_tabs[0]:
+                _render_script_settings(top_tabs[0], params)
+            with top_tabs[1]:
+                uploaded_files = _render_video_settings(top_tabs[1], params)
+            with top_tabs[2]:
+                uploaded_audio_file, uploaded_bgm_file, voice_mode = _render_audio_settings(
+                    top_tabs[2], params
+                )
+            with top_tabs[3]:
+                _render_subtitle_settings(top_tabs[3], params)
+
+        else:
+            panel = st.columns(4)
+            _render_script_settings(panel[0], params)
+            uploaded_files = _render_video_settings(panel[1], params)
+            uploaded_audio_file, uploaded_bgm_file, voice_mode = _render_audio_settings(
+                panel[2], params
+            )
+            _render_subtitle_settings(panel[3], params)
 
     generation_submitted = _render_generation_controls(
         params,
