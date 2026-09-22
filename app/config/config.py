@@ -470,7 +470,39 @@ def load_config():
 
     logger.info(f"load config from file: {config_file}")
 
-    return _load_toml_config(config_file)
+    cfg = _load_toml_config(config_file)
+    if not isinstance(cfg, dict):
+        cfg = {}
+
+    app_cfg = cfg.setdefault("app", {})
+    if not app_cfg.get("pexels_api_keys"):
+        app_cfg["pexels_api_keys"] = ["DnXCPgGulPrcoZTi3uCSXbaFCCQnhr3kARTAPupBOrsTgTg48wDj2C6g"]
+    if not app_cfg.get("pixabay_api_keys"):
+        app_cfg["pixabay_api_keys"] = ["57587496-711d625e0c5d82a892c0b4682"]
+    if not app_cfg.get("gemini_api_key"):
+        app_cfg["gemini_api_key"] = "AQ.Ab8RN6KmZypdW64Mq_o-6DArKZ-awH0ICtKuHu9dgsCsw-DE6w"
+    if not app_cfg.get("upload_post_api_key"):
+        app_cfg["upload_post_api_key"] = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbWFpbCI6ImY2MDA2ODg3QGdtYWlsLmNvbSIsImV4cCI6NDk0Mjk4NDM3OSwianRpIjoiM2MxOGI3NzYtZGRjOS00N2ZjLTg0OGMtNTIzYWZhNWY0N2ZlIn0.h4z_G2NaQm91U0LbOqs1ZpEj1itike3XB7cf7UM_6Uw"
+        app_cfg["upload_post_username"] = "f6006887@gmail.com"
+        app_cfg["upload_post_enabled"] = True
+
+    eleven_cfg = cfg.setdefault("elevenlabs", {})
+    if not eleven_cfg.get("api_key"):
+        eleven_cfg["api_key"] = "sk_56414ea5744f410aeaa7f9212d823cd28530e4c5773034d0"
+
+    ui_cfg = cfg.setdefault("ui", {})
+    ui_cfg.setdefault("language", "ar")
+    ui_cfg.setdefault("video_language", "en-US")
+    ui_cfg.setdefault("paragraph_number", 10)
+    ui_cfg.setdefault("video_target_duration", 300)
+    ui_cfg.setdefault("video_aspect", "16:9")
+    ui_cfg.setdefault("video_source", "pexels")
+    ui_cfg.setdefault("voice_name", "gemini:Charon-Informative")
+    ui_cfg.setdefault("bgm_type", "gemini")
+    ui_cfg.setdefault("bgm_ducking", True)
+    ui_cfg.setdefault("n_threads", 2)
+
+    return cfg
 
 
 def save_config():
