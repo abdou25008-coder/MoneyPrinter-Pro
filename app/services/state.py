@@ -1,10 +1,15 @@
 import ast
 import copy
+import json
+import os
 import threading
 from abc import ABC, abstractmethod
 
+from loguru import logger
+
 from app.config import config
 from app.models import const
+from app.utils import utils
 
 
 _PATCH_EXISTING_TASK_SCRIPT = """
@@ -40,17 +45,105 @@ class BaseState(ABC):
         pass
 
 
-# Memory state management
+# Memory state management with Disk Persistence
 class MemoryState(BaseState):
     def __init__(self):
         self._tasks = {}
         self._lock = threading.RLock()
+        self._load_from_disk()
+
+    def _state_file(self) -> str:
+        s_dir = utils.storage_dir(create=True)
+        return os.path.join(s_dir, "tasks_state.json")
+
+    def _persist_to_disk(self):
+        try:
+            s_file = self._state_file()
+            temp_path = s_file + ".tmp"
+            os.makedirs(os.path.dirname(s_file), exist_ok=True)
+            with open(temp_path, "w", encoding="utf-8") as f:
+                json.dump(self._tasks, f, ensure_ascii=False, indent=2, default=str)
+                f.write("\n")
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_path, s_file)
+        except Exception as exc:
+            logger.warning(f"failed to persist tasks_state.json: {exc}")
+
+    def _load_from_disk(self):
+        with self._lock:
+            # 1. Load from tasks_state.json if available
+            try:
+                s_file = self._state_file()
+                if os.path.isfile(s_file):
+                    with open(s_file, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        if isinstance(data, dict):
+                            self._tasks.update(data)
+            except Exception as exc:
+                logger.warning(f"failed to load tasks_state.json: {exc}")
+
+            # 2. Reconstruct from task directories in storage/tasks
+            try:
+                tasks_root = utils.task_dir()
+                if os.path.isdir(tasks_root):
+                    for entry in os.scandir(tasks_root):
+                        if entry.is_dir() and not entry.name.startswith("."):
+                            tid = entry.name
+                            if tid not in self._tasks:
+                                t_state_file = os.path.join(entry.path, "task_state.json")
+                                if os.path.isfile(t_state_file):
+                                    try:
+                                        with open(t_state_file, "r", encoding="utf-8") as tf:
+                                            self._tasks[tid] = json.load(tf)
+                                            continue
+                                    except Exception:
+                                        pass
+
+                                script_file = os.path.join(entry.path, "script.json")
+                                script_data = {}
+                                if os.path.isfile(script_file):
+                                    try:
+                                        with open(script_file, "r", encoding="utf-8") as sf:
+                                            script_data = json.load(sf)
+                                    except Exception:
+                                        pass
+
+                                videos = []
+                                for fn in os.listdir(entry.path):
+                                    if fn.startswith("final-") and fn.endswith((".mp4", ".mov", ".mkv")):
+                                        videos.append(os.path.join(entry.path, fn))
+
+                                if videos:
+                                    videos.sort()
+                                    params_dict = script_data.get("params", {})
+                                    subject = (
+                                        params_dict.get("video_subject")
+                                        or script_data.get("script", "")[:40]
+                                        or tid
+                                    )
+                                    self._tasks[tid] = {
+                                        "task_id": tid,
+                                        "state": const.TASK_STATE_COMPLETE,
+                                        "progress": 100,
+                                        "videos": videos,
+                                        "video_subject": subject,
+                                        "script": script_data.get("script", ""),
+                                        "mtime": entry.stat().st_mtime,
+                                    }
+            except Exception as exc:
+                logger.warning(f"failed to scan task storage for recovery: {exc}")
 
     def get_all_tasks(self, page: int, page_size: int):
         start = (page - 1) * page_size
         end = start + page_size
         with self._lock:
+            # Sort by mtime descending (newest first)
             tasks = [copy.deepcopy(task) for task in self._tasks.values()]
+            tasks.sort(
+                key=lambda t: float(t.get("mtime", 0) or t.get("updated_at", 0) or 0),
+                reverse=True,
+            )
             total = len(tasks)
         return tasks[start:end], total
 
@@ -66,12 +159,32 @@ class MemoryState(BaseState):
             progress = 100
 
         with self._lock:
-            self._tasks[task_id] = {
+            existing = self._tasks.get(task_id, {})
+            task_dict = {
+                **existing,
                 "task_id": task_id,
                 "state": state,
                 "progress": progress,
-                **kwargs,
+                **copy.deepcopy(kwargs),
             }
+            import time
+            if "mtime" not in task_dict:
+                task_dict["mtime"] = time.time()
+            self._tasks[task_id] = task_dict
+
+            try:
+                tdir = utils.task_dir(task_id)
+                t_state_file = os.path.join(tdir, "task_state.json")
+                temp_tf = t_state_file + ".tmp"
+                with open(temp_tf, "w", encoding="utf-8") as tf:
+                    json.dump(task_dict, tf, ensure_ascii=False, indent=2, default=str)
+                    tf.flush()
+                    os.fsync(tf.fileno())
+                os.replace(temp_tf, t_state_file)
+            except Exception:
+                pass
+
+            self._persist_to_disk()
 
     def get_task(self, task_id: str):
         with self._lock:
@@ -79,19 +192,31 @@ class MemoryState(BaseState):
             return copy.deepcopy(task) if task is not None else None
 
     def patch_task(self, task_id: str, **kwargs) -> bool:
-        # 异步发布只应补充发布状态，不能覆盖已经保存的视频、字幕等结果。
-        # 在同一把锁内完成存在性判断和字段合并，也可避免任务删除后
-        # 被后台线程重建。
         with self._lock:
             task = self._tasks.get(task_id)
             if task is None:
                 return False
             task.update(copy.deepcopy(kwargs))
+
+            try:
+                tdir = utils.task_dir(task_id)
+                t_state_file = os.path.join(tdir, "task_state.json")
+                temp_tf = t_state_file + ".tmp"
+                with open(temp_tf, "w", encoding="utf-8") as tf:
+                    json.dump(task, tf, ensure_ascii=False, indent=2, default=str)
+                    tf.flush()
+                    os.fsync(tf.fileno())
+                os.replace(temp_tf, t_state_file)
+            except Exception:
+                pass
+
+            self._persist_to_disk()
             return True
 
     def delete_task(self, task_id: str):
         with self._lock:
             self._tasks.pop(task_id, None)
+            self._persist_to_disk()
 
 
 # Redis state management
