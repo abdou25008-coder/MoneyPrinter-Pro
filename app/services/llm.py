@@ -386,6 +386,19 @@ def _generate_response(prompt: str, app_config=None) -> str:
                 ],
             )
 
+            # 避免使用 0 额度的 preview/pro 模型，优先尝试 gemini-2.5-flash / gemini-2.0-flash / gemini-1.5-flash
+            effective_model = model_name
+            if not effective_model or "3.1" in effective_model or "gemini-pro" == effective_model:
+                effective_model = "gemini-2.5-flash"
+
+            candidate_models = [effective_model]
+            for fallback in ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"):
+                if fallback not in candidate_models:
+                    candidate_models.append(fallback)
+
+            generated_text = None
+            last_error = None
+
             try:
                 # 新版 google-genai 通过统一 Client 暴露模型服务。上下文管理器
                 # 会在请求结束后关闭底层 HTTP 连接，避免频繁生成时积累连接资源。
@@ -393,15 +406,35 @@ def _generate_response(prompt: str, app_config=None) -> str:
                     api_key=api_key,
                     http_options=http_options,
                 ) as client:
-                    response = client.models.generate_content(
-                        model=model_name,
-                        contents=prompt,
-                        config=generation_config,
-                    )
-                generated_text = response.text
+                    for candidate in candidate_models:
+                        try:
+                            logger.info(f"calling gemini api with model: {candidate}")
+                            response = client.models.generate_content(
+                                model=candidate,
+                                contents=prompt,
+                                config=generation_config,
+                            )
+                            generated_text = response.text
+                            if generated_text:
+                                logger.info(f"gemini model {candidate} successfully generated content")
+                                break
+                        except Exception as exc:
+                            last_error = exc
+                            err_msg = str(exc)
+                            if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg or "404" in err_msg or "NotFound" in err_msg:
+                                logger.warning(
+                                    f"gemini model '{candidate}' quota/availability error: {err_msg}. Trying fallback model..."
+                                )
+                                continue
+                            raise
             except (AttributeError, IndexError, ValueError) as e:
                 logger.warning(f"gemini returned invalid response content: {str(e)}")
                 raise ValueError(f"[{llm_provider}] returned invalid response content")
+
+            if not generated_text:
+                if last_error:
+                    raise last_error
+                raise ValueError(f"[{llm_provider}] returned an empty response")
 
             return _normalize_text_response(generated_text, llm_provider)
 
