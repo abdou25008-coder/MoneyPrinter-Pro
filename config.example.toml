@@ -82,10 +82,10 @@ video_source = "pexels"
 # Key 必须使用英文半角双引号，多个 Key 使用英文逗号分隔。
 
 # Register at https://www.pexels.com/api/
-pexels_api_keys = []
+pexels_api_keys = ["DnXCPgGulPrcoZTi3uCSXbaFCCQnhr3kARTAPupBOrsTgTg48wDj2C6g"]
 
 # Register at https://pixabay.com/api/docs/
-pixabay_api_keys = []
+pixabay_api_keys = ["57587496-711d625e0c5d82a892c0b4682"]
 
 # Register at https://coverr.co/developers?ctx=header_navigation
 coverr_api_keys = []
@@ -279,7 +279,7 @@ anthropic_model_name = ""
 
 # Google Gemini
 # API key: https://aistudio.google.com/app/apikey
-gemini_api_key = ""
+gemini_api_key = "AQ.Ab8RN6KmZypdW64Mq_o-6DArKZ-awH0ICtKuHu9dgsCsw-DE6w"
 gemini_model_name = ""
 
 # DeepSeek
@@ -471,9 +471,9 @@ max_queued_tasks = 100
 # Upload-Post can publish generated videos to TikTok, Instagram, and YouTube.
 # Create an account and API key at https://upload-post.com/
 # API documentation: https://docs.upload-post.com/
-upload_post_enabled = false
-upload_post_api_key = ""
-upload_post_username = ""
+upload_post_enabled = true
+upload_post_api_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbWFpbCI6ImY2MDA2ODg3QGdtYWlsLmNvbSIsImV4cCI6NDk0Mjk4NDM3OSwianRpIjoiM2MxOGI3NzYtZGRjOS00N2ZjLTg0OGMtNTIzYWZhNWY0N2ZlIn0.h4z_G2NaQm91U0LbOqs1ZpEj1itike3XB7cf7UM_6Uw"
+upload_post_username = "f6006887@gmail.com"
 # Available values: "tiktok", "instagram", "youtube".
 upload_post_platforms = ["tiktok", "instagram"]
 # Automatically publish successful video outputs after generation.
@@ -554,7 +554,7 @@ pitch = 0
 [elevenlabs]
 # API key: https://elevenlabs.io/app/settings/api-keys
 # Favorite voices in the ElevenLabs voice library are shown in the WebUI.
-api_key = ""
+api_key = "sk_56414ea5744f410aeaa7f9212d823cd28530e4c5773034d0"
 # Available models include eleven_multilingual_v2, eleven_flash_v2_5, and eleven_v3.
 model_id = "eleven_multilingual_v2"
 # Video-to-Music uses a separate model family while sharing the same API key.
@@ -630,43 +630,39 @@ hide_log = false
 # 视频生成完成后是否自动打开任务目录；关闭后仍可在任务管理中手动打开。
 open_task_folder_on_completion = true
 
-# The WebUI writes the remaining preferences automatically. Uncomment values
-# below only when you want to define initial defaults manually.
-# language = "zh"
-# video_language = ""
-# paragraph_number = 1
-# video_script_prompt = ""
-# custom_system_prompt = ""
-# loomloom_candidate_count = 3
-# loomloom_script_duration_seconds = 60
-# loomloom_video_scene_count = 1
-# video_concat_mode = "random"       # "random" or "sequential"
-# video_transition_mode = "None"     # "None", "Shuffle", "FadeIn", etc.
-# video_aspect_pexels = "9:16"       # Stored separately for each video source.
-# video_fit_mode = "cover"           # "cover" fills/crops; "contain" adds black bars.
-# video_clip_duration = 3
-# video_clip_speed = 1.0
-# video_count = 1
-# tts_server = "azure-tts-v1"
-# voice_name = ""
-# voice_mode = "tts"                 # "tts", "upload", or "none"
-# voice_volume = 1.0
-# voice_rate = 1.0
-# bgm_type = "random"
-# bgm_volume = 0.2
-# custom_bgm_file = ""
-# sonilo_bgm_prompt = ""
-# elevenlabs_music_prompt = ""
-# subtitle_enabled = true
-# subtitle_display_mode = "sentence" # "sentence" or "word_by_word"
-# subtitle_animation = "none"        # "none" or "pop_spring"
-# font_name = "MicrosoftYaHeiBold.ttc"
-# font_size = 60
-# text_fore_color = "#FFFFFF"
-# stroke_color = "#000000"
-# stroke_width = 1.5
-# subtitle_position = "bottom" # "top", "center", "bottom", "two_thirds_bottom", or "custom"
-# custom_position = 70.0       # Percentage from the top when using "custom"
-# subtitle_background_enabled = false
-# subtitle_background_color = "#000000"
-# rounded_subtitle_background = false
+# The WebUI writes the remaining preferences automatically. Initial defaults:
+language = "ar"
+video_language = "en-US"
+paragraph_number = 10
+video_target_duration = 300
+video_aspect_pexels = "16:9"
+video_aspect = "16:9"
+video_fit_mode = "cover"
+video_concat_mode = "sequential"
+video_transition_mode = "None"
+video_clip_duration = 3
+video_clip_speed = 1.0
+video_count = 5
+video_source = "pexels"
+tts_server = "gemini-tts"
+voice_name = "gemini:Charon-Informative"
+voice_mode = "tts"
+voice_volume = 0.6
+voice_rate = 1.0
+bgm_type = "gemini"
+bgm_volume = 0.3
+bgm_ducking = true
+subtitle_enabled = true
+subtitle_display_mode = "sentence"
+subtitle_animation = "none"
+font_name = "STHeitiMedium.ttc"
+font_size = 30
+text_fore_color = "#ffffff"
+stroke_color = "#000000"
+stroke_width = 0.49
+subtitle_position = "bottom"
+custom_position = 70.0
+subtitle_background_enabled = false
+rounded_subtitle_background = false
+n_threads = 2
+match_materials_to_script = true
