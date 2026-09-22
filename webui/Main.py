@@ -767,6 +767,14 @@ if st.session_state.get("ui_language") == "ar":
             margin-left: 0 !important;
             margin-right: 0.35rem !important;
         }
+        div[data-testid="stNotification"],
+        div:has(> a[href*="snowflake"]),
+        div:has(> a[href*="Snowflake"]),
+        .streamlit-banner,
+        iframe[title*="banner"] {
+            display: none !important;
+            visibility: hidden !important;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -2119,13 +2127,22 @@ def _render_current_generation_task():
     task_id = st.session_state.get("current_generation_task_id", "")
     if not task_id:
         try:
-            tasks, _ = sm.state.get_all_tasks(1, 5)
-            for t in reversed(tasks):
+            tasks, _ = sm.state.get_all_tasks(1, 20)
+            # 1. 优先查找正在处理的任务
+            for t in tasks:
                 t_state = _normalize_task_state(t.get("state"))
                 if t_state == const.TASK_STATE_PROCESSING:
                     task_id = t.get("task_id")
                     st.session_state["current_generation_task_id"] = task_id
                     break
+            # 2. 如果没有正在生成的任务，自动展示最近完成的任务（包含视频成片）
+            if not task_id and tasks:
+                for t in tasks:
+                    t_state = _normalize_task_state(t.get("state"))
+                    if t_state == const.TASK_STATE_COMPLETE and t.get("videos"):
+                        task_id = t.get("task_id")
+                        st.session_state["current_generation_task_id"] = task_id
+                        break
         except Exception:
             pass
 
@@ -2141,6 +2158,9 @@ def _render_current_generation_task():
         st.error(tr("Video Generation Failed"))
         return
 
+    if not task:
+        return
+
     state = _normalize_task_state((task or {}).get("state"))
     if state in {const.TASK_STATE_COMPLETE, const.TASK_STATE_FAILED}:
         _remove_active_generation_task(task_id)
@@ -2148,6 +2168,192 @@ def _render_current_generation_task():
         return
 
     _render_running_generation_task(task_id)
+
+
+def _render_all_tasks_history_section():
+    """
+    عرض أرشيف كامل للمهام والفيديوهات السابقة مباشرة في الصفحة الرئيسية.
+    """
+    is_ar = st.session_state.get("ui_language") == "ar"
+
+    st.markdown("---")
+
+    header_col, action_col = st.columns([3, 2], vertical_alignment="center")
+    with header_col:
+        title = "📂 سجل الفيديوهات والمهام السابقة المحفوظة" if is_ar else "📂 Saved Videos & Tasks History"
+        st.subheader(title)
+        caption = "جميع الفيديوهات والاسكريبتات التي تم إنشاؤها محفوظة تلقائياً هنا." if is_ar else "All generated videos and scripts are automatically saved and available here."
+        st.caption(caption)
+
+    tasks = _collect_task_summaries(limit=50)
+
+    with action_col:
+        btn_c1, btn_c2, btn_c3 = st.columns(3)
+        with btn_c1:
+            refresh_label = "🔄 تحديث" if is_ar else "🔄 Refresh"
+            if st.button(refresh_label, key="refresh_all_tasks_btn", use_container_width=True):
+                st.rerun()
+        with btn_c2:
+            try:
+                export_list = []
+                for t in tasks:
+                    tid = t["task_id"]
+                    t_path = t["task_path"]
+                    s_data = _safe_load_task_script(t_path)
+                    export_list.append({
+                        "task_id": tid,
+                        "subject": t.get("subject", ""),
+                        "state": t.get("state"),
+                        "progress": t.get("progress", 0),
+                        "mtime": t.get("mtime", 0),
+                        "script": s_data.get("script", "") or t.get("script", ""),
+                        "params": s_data.get("params", {}),
+                        "video_file": os.path.basename(t.get("video_file", "")) if t.get("video_file") else "",
+                    })
+                export_json_str = json.dumps(export_list, ensure_ascii=False, indent=2)
+                exp_label = "💾 تصدير JSON" if is_ar else "💾 Export JSON"
+                exp_help = "تحميل نسخة احتياطية من جميع المهام والاسكريبتات" if is_ar else "Download a backup of all tasks and scripts"
+                st.download_button(
+                    exp_label,
+                    data=export_json_str,
+                    file_name=f"moneyprinter_tasks_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                    mime="application/json",
+                    key="export_tasks_backup_dl_btn",
+                    help=exp_help,
+                    use_container_width=True,
+                )
+            except Exception as e:
+                logger.warning(f"failed to prepare tasks export: {e}")
+        with btn_c3:
+            imp_btn_label = "📥 استيراد" if is_ar else "📥 Import"
+            if st.button(imp_btn_label, key="toggle_task_import_panel", use_container_width=True):
+                st.session_state["show_task_import_panel"] = not st.session_state.get("show_task_import_panel", False)
+                st.rerun()
+
+    if st.session_state.get("show_task_import_panel", False):
+        imp_box_title = "📥 استيراد نسخة احتياطية من المهام (JSON)" if is_ar else "📥 Import Tasks Backup (JSON)"
+        with st.expander(imp_box_title, expanded=True):
+            up_label = "اختر ملف النسخة الاحتياطية (.json)" if is_ar else "Select backup file (.json)"
+            uploaded_file = st.file_uploader(up_label, type=["json"], key="tasks_backup_file_uploader")
+            if uploaded_file is not None:
+                try:
+                    imported_items = json.loads(uploaded_file.getvalue().decode("utf-8"))
+                    if isinstance(imported_items, list):
+                        imported_count = 0
+                        for it in imported_items:
+                            if isinstance(it, dict) and it.get("task_id"):
+                                it_id = it["task_id"]
+                                it_dir = utils.task_dir(it_id)
+                                os.makedirs(it_dir, exist_ok=True)
+                                if it.get("params") or it.get("script"):
+                                    sf_path = os.path.join(it_dir, "script.json")
+                                    with open(sf_path, "w", encoding="utf-8") as sf:
+                                        json.dump({
+                                            "script": it.get("script", ""),
+                                            "params": it.get("params", {}),
+                                        }, sf, ensure_ascii=False, indent=2)
+                                sm.state.update_task(
+                                    task_id=it_id,
+                                    state=it.get("state", const.TASK_STATE_COMPLETE),
+                                    progress=it.get("progress", 100),
+                                    video_subject=it.get("subject", ""),
+                                    script=it.get("script", ""),
+                                    mtime=it.get("mtime", time.time()),
+                                )
+                                imported_count += 1
+                        succ_msg = f"تم بنجاح استيراد {imported_count} مهمة وسكريبت!" if is_ar else f"Successfully imported {imported_count} tasks!"
+                        st.success(succ_msg)
+                        st.session_state["show_task_import_panel"] = False
+                        st.rerun()
+                    else:
+                        st.error("صيغة الملف غير صحيحة" if is_ar else "Invalid file format")
+                except Exception as ex:
+                    st.error(f"{'فشل استيراد الملف' if is_ar else 'Import failed'}: {ex}")
+
+    if not tasks:
+        no_tasks_msg = "لا توجد مهام سابقة حتى الآن. كل فيديو يتم إنشاؤه سيظهر هنا تلقائياً ويبقى محفوظاً دائماً." if is_ar else "No previous tasks found. Any generated video will be automatically saved here."
+        st.info(no_tasks_msg)
+        return
+
+    for idx, t in enumerate(tasks):
+        task_id = t["task_id"]
+        task_path = t["task_path"]
+        subject = t.get("subject") or task_id
+        mtime_str = _format_task_time(t.get("mtime"))
+        state = _normalize_task_state(t.get("state"))
+        video_file = t.get("video_file", "")
+        has_video = bool(video_file and os.path.isfile(video_file))
+        is_processing = state == const.TASK_STATE_PROCESSING
+        is_busy = is_processing or tm.is_task_busy(t)
+        has_restore_data = os.path.isfile(os.path.join(task_path, "script.json"))
+
+        if state == const.TASK_STATE_COMPLETE or has_video:
+            status_text = "🟢 مكتمل" if is_ar else "🟢 Completed"
+        elif is_busy:
+            status_text = f"⏳ جاري التوليد ({t.get('progress', 0)}%)" if is_ar else f"⏳ Processing ({t.get('progress', 0)}%)"
+        else:
+            status_text = "❌ لم يكتمل" if is_ar else "❌ Incomplete"
+
+        safe_key = "".join(ch if ch.isalnum() else "_" for ch in task_id)[:40]
+        expander_title = f"{status_text} | 🎬 {subject} ({mtime_str})"
+
+        with st.expander(expander_title, expanded=(idx == 0 and has_video)):
+            c_left, c_right = st.columns([3, 2])
+            with c_left:
+                st.markdown(f"**{'عنوان الفيديو' if is_ar else 'Subject'}:** {subject}")
+                st.caption(f"{'معرف المهمة' if is_ar else 'Task ID'}: `{task_id}` | {'الوقت' if is_ar else 'Time'}: {mtime_str}")
+
+                s_data = _safe_load_task_script(task_path)
+                script_text = s_data.get("script") or t.get("script", "")
+                if script_text:
+                    st.text_area(
+                        "الاسكريبت الصوتي (Voiceover Script):" if is_ar else "Voiceover Script:",
+                        value=script_text,
+                        height=100,
+                        key=f"hist_script_area_{safe_key}_{idx}",
+                        disabled=True
+                    )
+            with c_right:
+                if has_video:
+                    st.video(video_file)
+                    dl_name = _build_video_download_name(subject, 1, 1)
+                    with open(video_file, "rb") as vf:
+                        st.download_button(
+                            "⬇️ تحميل الفيديو (MP4)" if is_ar else "⬇️ Download Video (MP4)",
+                            data=vf,
+                            file_name=dl_name,
+                            mime="video/mp4",
+                            key=f"hist_dl_btn_{safe_key}_{idx}",
+                            use_container_width=True,
+                            icon=":material/download:",
+                        )
+                elif is_busy:
+                    st.info(f"⏳ جاري توليد الفيديو... {t.get('progress', 0)}%" if is_ar else f"⏳ Generating video... {t.get('progress', 0)}%")
+                else:
+                    st.warning("لم يتم العثور على ملف الفيديو النهائي" if is_ar else "No final video file found")
+
+            # Action buttons
+            b1, b2, b3 = st.columns([2, 2, 1])
+            with b1:
+                restore_btn_label = "📝 استعادة السكريبت والإعدادات" if is_ar else "📝 Restore Script & Settings"
+                restore_help = "نسخ إعدادات وسكريبت هذا الفيديو إلى النموذج بالأعلى" if is_ar else "Load this task script & settings into the form"
+                if st.button(restore_btn_label, key=f"hist_restore_{safe_key}_{idx}", use_container_width=True, disabled=is_processing or not has_restore_data, help=restore_help):
+                    _queue_task_restore(task_id)
+            with b2:
+                if has_video:
+                    set_active_label = "▶️ عرض في المشغل الرئيسي" if is_ar else "▶️ Show in Main Player"
+                    if st.button(set_active_label, key=f"hist_view_{safe_key}_{idx}", use_container_width=True):
+                        st.session_state["current_generation_task_id"] = task_id
+                        st.rerun()
+            with b3:
+                del_label = "🗑️ حذف" if is_ar else "🗑️ Delete"
+                if st.button(del_label, key=f"hist_del_{safe_key}_{idx}", use_container_width=True, disabled=is_busy):
+                    if _delete_task(task_id, task_path, state):
+                        st.toast("تم حذف المهمة بنجاح" if is_ar else "Task deleted")
+                        st.rerun()
+                    else:
+                        st.error("فشل حذف المهمة" if is_ar else "Failed to delete task")
+
 
 
 def get_llm_provider_tips(provider_id, **kwargs):
@@ -5131,6 +5337,10 @@ def _render_script_settings(panel, params):
                 (tr("120 Seconds (2 Minutes)"), 120),
                 (tr("180 Seconds (3 Minutes)"), 180),
                 (tr("300 Seconds (5 Minutes)"), 300),
+                (tr("420 Seconds (7 Minutes)"), 420),
+                (tr("600 Seconds (10 Minutes)"), 600),
+                (tr("720 Seconds (12 Minutes)"), 720),
+                (tr("900 Seconds (15 Minutes)"), 900),
             ]
             selected_duration = stable_selectbox(
                 tr("Target Video Duration"),
@@ -8420,6 +8630,7 @@ def _render_generation_controls(
         logger.info(f"WebUI generation task submitted: task_id={task_id}")
 
     _render_current_generation_task()
+    _render_all_tasks_history_section()
     return start_button
 
 

@@ -3,7 +3,12 @@ div[data-testid="stToolbar"],
 div[data-testid="stDecoration"],
 div[data-testid="stStatusWidget"],
 div[data-testid="stSkillsNudgeAnchor"],
-div[data-testid="stSkillsNudge"] {
+div[data-testid="stSkillsNudge"],
+div[data-testid="stNotification"],
+div:has(> a[href*="snowflake"]),
+div:has(> a[href*="Snowflake"]),
+.streamlit-banner,
+iframe[title*="banner"] {
     display: none !important;
 }
 
