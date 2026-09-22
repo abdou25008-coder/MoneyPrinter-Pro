@@ -26,7 +26,7 @@ _MAX_LOG_TASKS = 20
 _MAX_LOG_RECORDS_PER_TASK = 1000
 # Streamlit 无法由后台线程直接推送组件更新，只能通过 Fragment 轮询。0.5 秒
 # 足以让 WebUI 日志接近终端实时输出，又不会像高频刷新那样持续占用浏览器资源。
-TASK_LOG_REFRESH_INTERVAL_SECONDS = 0.5
+TASK_LOG_REFRESH_INTERVAL_SECONDS = "2s"
 
 
 def _append_task_log(task_id: str, message: str) -> None:
