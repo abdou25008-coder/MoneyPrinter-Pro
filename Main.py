@@ -201,7 +201,7 @@ LOOMLOOM_VIDEO_MODEL_PRICES = (
 )
 DEFAULT_SUBTITLE_SETTINGS = {
     "subtitle_enabled": True,
-    "font_name": "MicrosoftYaHeiBold.ttc",
+    "font_name": "NotoSansArabic.ttf",
     "subtitle_position": "bottom",
     "subtitle_display_mode": "sentence",
     "subtitle_animation": "none",
@@ -809,15 +809,28 @@ def _format_task_subject(subject, max_length=30):
 
 def _safe_load_task_script(task_path):
     script_file = os.path.join(task_path, "script.json")
-    if not os.path.isfile(script_file):
-        return {}
+    if os.path.isfile(script_file):
+        try:
+            with open(script_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning(f"failed to read task script data: {script_file}, {e}")
 
-    try:
-        with open(script_file, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        logger.warning(f"failed to read task script data: {script_file}, {e}")
-        return {}
+    # Fallback to task_state.json if script.json is absent
+    state_file = os.path.join(task_path, "task_state.json")
+    if os.path.isfile(state_file):
+        try:
+            with open(state_file, "r", encoding="utf-8") as f:
+                sdata = json.load(f)
+                return {
+                    "script": sdata.get("script", ""),
+                    "params": sdata.get("params", {}),
+                    "search_terms": sdata.get("terms", ""),
+                }
+        except Exception:
+            pass
+
+    return {}
 
 
 def _find_final_task_video(task_path: str) -> str:
@@ -973,21 +986,17 @@ def _task_state_filter_key(task):
     return "history"
 
 
-def _scan_history_tasks(limit=30):
+def _scan_history_tasks(limit=50):
     tasks_root = utils.task_dir()
     if not os.path.isdir(tasks_root):
         return []
 
-    # 任务管理 fragment 每两秒刷新一次。先只读取低成本的目录元数据并截取最近
-    # 的任务，再解析 script.json 和视频列表，避免历史任务很多时反复扫描全部内容。
     task_entries = []
     try:
         with os.scandir(tasks_root) as entries:
             for entry in entries:
                 try:
-                    if entry.name.startswith(".") or not entry.is_dir(
-                        follow_symlinks=False
-                    ):
+                    if entry.name.startswith(".") or not entry.is_dir(follow_symlinks=False):
                         continue
                     task_entries.append(
                         (
@@ -997,7 +1006,6 @@ def _scan_history_tasks(limit=30):
                         )
                     )
                 except OSError as e:
-                    # 单个任务目录可能正在被删除，不应因此让整个任务面板失效。
                     logger.debug(f"skip unavailable task directory: {entry.path}, {e}")
     except OSError as e:
         logger.warning(f"failed to scan task directory: {tasks_root}, {e}")
@@ -1006,21 +1014,50 @@ def _scan_history_tasks(limit=30):
     task_entries.sort(key=lambda item: item[0], reverse=True)
     tasks = []
     for mtime, name, task_path in task_entries[:limit]:
+        # 1. Read task_state.json if available
+        task_state_data = {}
+        t_state_file = os.path.join(task_path, "task_state.json")
+        if os.path.isfile(t_state_file):
+            try:
+                with open(t_state_file, "r", encoding="utf-8") as tf:
+                    task_state_data = json.load(tf)
+            except Exception:
+                pass
+
+        # 2. Read script.json
         script_data = _safe_load_task_script(task_path)
         params_data = script_data.get("params", {}) if script_data else {}
+        if not params_data and isinstance(task_state_data.get("params"), dict):
+            params_data = task_state_data["params"]
+
+        # 3. Resolve video file
         video_file = _find_final_task_video(task_path)
+        if not video_file and task_state_data.get("videos"):
+            for vf in task_state_data["videos"]:
+                if isinstance(vf, str) and os.path.isfile(vf):
+                    video_file = vf
+                    break
+
         subject = (
-            params_data.get("video_subject")
-            or script_data.get("script", "")[:40]
+            task_state_data.get("video_subject")
+            or params_data.get("video_subject")
+            or task_state_data.get("subject")
+            or (script_data.get("script", "")[:60] if script_data else "")
             or name
         )
+        t_state = task_state_data.get("state")
+        if t_state is None:
+            t_state = const.TASK_STATE_COMPLETE if video_file else None
+
+        t_mtime = task_state_data.get("mtime") or mtime
+
         tasks.append(
             {
                 "task_id": name,
                 "subject": subject,
-                "state": const.TASK_STATE_COMPLETE if video_file else None,
-                "progress": 100 if video_file else 0,
-                "mtime": mtime,
+                "state": t_state,
+                "progress": task_state_data.get("progress", 100 if video_file else 0),
+                "mtime": t_mtime,
                 "task_path": task_path,
                 "video_file": video_file,
                 "source": "history",
@@ -1030,11 +1067,40 @@ def _scan_history_tasks(limit=30):
     return tasks
 
 
-def _collect_task_summaries(limit=20):
-    history_tasks = {task["task_id"]: task for task in _scan_history_tasks(limit=50)}
+def _collect_task_summaries(limit=50):
+    history_tasks = {task["task_id"]: task for task in _scan_history_tasks(limit=limit or 50)}
 
+    # 1. Load from persistent tasks_history.json if available
     try:
-        runtime_tasks, _ = sm.state.get_all_tasks(1, 50)
+        hist_file = os.path.join(utils.storage_dir(), "tasks_history.json")
+        if os.path.isfile(hist_file):
+            with open(hist_file, "r", encoding="utf-8") as hf:
+                archive_list = json.load(hf)
+                if isinstance(archive_list, list):
+                    for pa in archive_list:
+                        pid = pa.get("task_id")
+                        if pid and pid not in history_tasks:
+                            t_p = os.path.join(utils.task_dir(), pid)
+                            v_f = pa.get("video_file", "")
+                            if not v_f and os.path.isdir(t_p):
+                                v_f = _find_final_task_video(t_p)
+                            history_tasks[pid] = {
+                                "task_id": pid,
+                                "subject": pa.get("subject", pid),
+                                "state": pa.get("state", const.TASK_STATE_COMPLETE),
+                                "cross_post_state": pa.get("cross_post_state"),
+                                "progress": pa.get("progress", 100 if v_f else 0),
+                                "mtime": float(pa.get("mtime", 0) or 0),
+                                "task_path": t_p,
+                                "video_file": v_f,
+                                "source": "archive",
+                            }
+    except Exception as exc:
+        logger.debug(f"failed to load tasks_history.json: {exc}")
+
+    # 2. Merge from runtime state
+    try:
+        runtime_tasks, _ = sm.state.get_all_tasks(1, 100)
     except Exception as e:
         logger.warning(f"failed to load runtime tasks: {e}")
         runtime_tasks = []
@@ -1050,35 +1116,48 @@ def _collect_task_summaries(limit=20):
         video_file = (
             video_files[0] if video_files else history_task.get("video_file", "")
         )
+        if not video_file and os.path.isdir(task_path):
+            video_file = _find_final_task_video(task_path)
+
         subject = (
             task.get("video_subject")
             or history_task.get("subject")
-            or (task.get("script", "")[:40] if task.get("script") else "")
+            or (task.get("script", "")[:60] if task.get("script") else "")
             or task_id
         )
+
+        task_mtime = float(task.get("mtime", 0) or 0)
+        if not task_mtime and os.path.isdir(task_path):
+            try:
+                task_mtime = os.path.getmtime(task_path)
+            except OSError:
+                pass
+        if not task_mtime:
+            task_mtime = float(history_task.get("mtime", 0) or 0)
+
+        t_state = task.get("state") or history_task.get("state")
+        if t_state is None and video_file:
+            t_state = const.TASK_STATE_COMPLETE
 
         history_tasks[task_id] = {
             "task_id": task_id,
             "subject": subject,
-            "state": task.get("state"),
+            "state": t_state,
             "cross_post_state": task.get("cross_post_state"),
-            "progress": int(task.get("progress", 0) or 0),
-            "mtime": os.path.getmtime(task_path)
-            if os.path.isdir(task_path)
-            else history_task.get("mtime", 0),
+            "progress": int(task.get("progress", 100 if video_file else 0) or 0),
+            "mtime": task_mtime,
             "task_path": task_path,
             "video_file": video_file,
             "source": "runtime",
         }
 
+    # 3. Merge active generation tasks
     for task_id, active_task in _active_generation_tasks().items():
         history_task = history_tasks.get(task_id, {})
         if history_task and _task_state_filter_key(history_task) in {
             "complete",
             "failed",
         }:
-            # 会话中的 active 标记只负责覆盖任务刚提交到状态存储前的极短窗口。
-            # 后台任务结束后必须以真实终态为准，不能把失败任务重新显示为生成中。
             continue
 
         task_path = os.path.join(utils.task_dir(), task_id)
@@ -1096,8 +1175,26 @@ def _collect_task_summaries(limit=20):
             "source": "active",
         }
 
+    # 4. Merge any tasks synced from browser storage in session_state
+    browser_tasks = st.session_state.get("browser_synced_tasks", [])
+    if isinstance(browser_tasks, list):
+        for bt in browser_tasks:
+            bid = bt.get("task_id")
+            if bid and bid not in history_tasks:
+                history_tasks[bid] = {
+                    "task_id": bid,
+                    "subject": bt.get("subject", bid),
+                    "state": bt.get("state", const.TASK_STATE_COMPLETE),
+                    "progress": bt.get("progress", 100),
+                    "mtime": float(bt.get("mtime", 0) or 0),
+                    "task_path": os.path.join(utils.task_dir(), bid),
+                    "video_file": bt.get("video_file", ""),
+                    "script": bt.get("script", ""),
+                    "source": "browser",
+                }
+
     tasks = list(history_tasks.values())
-    return sorted(tasks, key=lambda item: item["mtime"], reverse=True)[:limit]
+    return sorted(tasks, key=lambda item: float(item.get("mtime", 0) or 0), reverse=True)[:limit]
 
 
 def _is_headless_server():
@@ -1246,11 +1343,14 @@ def _render_task_table(filtered_tasks, key_prefix):
     with st.container(height=list_height, border=False):
         for task in visible_tasks:
             task_id = task["task_id"]
-            has_video = bool(task["video_file"] and os.path.isfile(task["video_file"]))
+            has_video = bool(task.get("video_file") and os.path.isfile(task["video_file"]))
             is_processing = _task_state_filter_key(task) == "processing"
             is_busy = is_processing or tm.is_task_busy(task)
-            has_restore_data = os.path.isfile(
-                os.path.join(task["task_path"], "script.json")
+            has_restore_data = bool(
+                os.path.isfile(os.path.join(task.get("task_path", ""), "script.json"))
+                or os.path.isfile(os.path.join(task.get("task_path", ""), "task_state.json"))
+                or task.get("script")
+                or task.get("params")
             )
             safe_task_key = "".join(ch if ch.isalnum() else "_" for ch in task_id)[:40]
 
@@ -1414,30 +1514,83 @@ def _render_task_manager_entry():
 def _load_task_restore_payload(task_id):
     tasks_root = os.path.realpath(utils.task_dir())
     task_path = os.path.realpath(os.path.join(tasks_root, str(task_id)))
+    script_data = {}
     try:
-        if os.path.commonpath([tasks_root, task_path]) != tasks_root:
-            raise ValueError("task path is outside the task directory")
-    except ValueError as e:
+        if os.path.commonpath([tasks_root, task_path]) == tasks_root:
+            script_data = _safe_load_task_script(task_path) or {}
+    except Exception as e:
         logger.warning(f"invalid task restore path: {task_id}, {e}")
-        return None
 
-    script_data = _safe_load_task_script(task_path)
-    raw_params = script_data.get("params")
+    raw_params = script_data.get("params") if isinstance(script_data, dict) else None
+
+    # 1. Fallback to tasks_history.json archive if raw_params not found
     if not isinstance(raw_params, dict):
-        logger.warning(f"task has no restorable parameters: {task_id}")
-        return None
+        try:
+            hist_file = os.path.join(utils.storage_dir(), "tasks_history.json")
+            if os.path.isfile(hist_file):
+                with open(hist_file, "r", encoding="utf-8") as hf:
+                    archive_tasks = json.load(hf)
+                    if isinstance(archive_tasks, list):
+                        for item in archive_tasks:
+                            if str(item.get("task_id")) == str(task_id):
+                                if isinstance(item.get("params"), dict) and item["params"]:
+                                    raw_params = item["params"]
+                                if not script_data.get("script") and item.get("script"):
+                                    script_data["script"] = item["script"]
+                                if not script_data.get("search_terms") and item.get("terms"):
+                                    script_data["search_terms"] = item["terms"]
+                                break
+        except Exception as exc:
+            logger.debug(f"failed to read tasks_history.json in restore payload: {exc}")
+
+    # 2. Fallback to runtime state
+    if not isinstance(raw_params, dict):
+        try:
+            task_info = sm.state.get_task(str(task_id))
+            if task_info:
+                if isinstance(task_info.get("params"), dict) and task_info["params"]:
+                    raw_params = task_info["params"]
+                if not script_data.get("script") and task_info.get("script"):
+                    script_data["script"] = task_info["script"]
+                if not script_data.get("search_terms") and task_info.get("terms"):
+                    script_data["search_terms"] = task_info["terms"]
+        except Exception as exc:
+            logger.debug(f"failed to check runtime task in restore payload: {exc}")
+
+    # 3. Fallback to browser synced tasks
+    if not isinstance(raw_params, dict):
+        browser_tasks = st.session_state.get("browser_synced_tasks", [])
+        if isinstance(browser_tasks, list):
+            for bt in browser_tasks:
+                if str(bt.get("task_id")) == str(task_id):
+                    if isinstance(bt.get("params"), dict) and bt["params"]:
+                        raw_params = bt["params"]
+                    if not script_data.get("script") and bt.get("script"):
+                        script_data["script"] = bt["script"]
+                    break
+
+    # If raw_params is still not dict, build minimal parameters so user never loses their prompt/script
+    if not isinstance(raw_params, dict):
+        raw_params = {}
 
     params_input = dict(raw_params)
     if script_data.get("script"):
         params_input["video_script"] = script_data["script"]
     if script_data.get("search_terms"):
         params_input["video_terms"] = script_data["search_terms"]
+    if not params_input.get("video_subject") and script_data.get("script"):
+        params_input["video_subject"] = script_data["script"][:40]
 
     try:
         params = VideoParams.model_validate(params_input).model_dump(mode="json")
     except Exception as e:
         logger.warning(f"failed to validate task restore parameters: {task_id}, {e}")
-        return None
+        # Even if strict validation failed, provide basic dictionary fallback
+        params = {
+            "video_subject": params_input.get("video_subject", str(task_id)),
+            "video_script": params_input.get("video_script", ""),
+            "video_terms": params_input.get("video_terms", ""),
+        }
 
     return {
         "task_id": str(task_id),
@@ -1838,26 +1991,31 @@ support_locales = [
 # -----------------------------------------------------------------------------
 
 
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=10, show_spinner=False)
 def get_all_fonts():
-    fonts = []
+    available = set()
     if os.path.exists(font_dir):
         for root, dirs, files in os.walk(font_dir):
             for file in files:
                 if file.endswith(".ttf") or file.endswith(".ttc"):
-                    fonts.append(file)
-    if not fonts:
-        fonts = [
-            "Impact.ttf",
-            "Montserrat-Bold.ttf",
-            "Roboto-Bold.ttf",
-            "BebasNeue-Regular.ttf",
-            "Poppins-Bold.ttf",
-            "Arial.ttf",
-            "NotoSansArabic.ttf",
-        ]
-    fonts.sort()
-    return fonts
+                    available.add(file)
+    default_order = [
+        "NotoSansArabic.ttf",
+        "Montserrat-Bold.ttf",
+        "Impact.ttf",
+        "BebasNeue-Regular.ttf",
+        "Roboto-Bold.ttf",
+        "Poppins-Bold.ttf",
+        "Arial.ttf",
+    ]
+    result = []
+    for f in default_order:
+        if f in available or not available:
+            result.append(f)
+    for f in sorted(available):
+        if f not in result:
+            result.append(f)
+    return result
 
 
 @st.cache_data(ttl=30, show_spinner=False)
@@ -2199,25 +2357,99 @@ def _render_all_tasks_history_section():
     if st.session_state.get("show_task_import_panel", False):
         imp_box_title = "📥 استيراد نسخة احتياطية من المهام (JSON)" if is_ar else "📥 Import Tasks Backup (JSON)"
         with st.expander(imp_box_title, expanded=True):
+            # 1. Quick Browser Storage Copy Button
+            try:
+                import streamlit.components.v1 as components
+                components.html(
+                    """
+                    <div style="margin-bottom: 10px; padding: 10px; background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.25); border-radius: 8px; direction: rtl; text-align: right; font-family: sans-serif;">
+                        <p style="margin: 0 0 6px 0; font-size: 0.85rem; font-weight: bold; color: #3b82f6;">⚡ استرجاع المهام من ذاكرة هذا المتصفح:</p>
+                        <p style="margin: 0 0 8px 0; font-size: 0.78rem; color: #888;">إذا أعدت فتح الموقع بعد إغلاقه، اضغط الزر لنسخ مهامك السابقة من المتصفح، ثم الصقها في الحقل بالأسفل واضغط استيراد:</p>
+                        <button onclick="
+                            try {
+                                const data = localStorage.getItem('mpt_browser_tasks_archive');
+                                if (data && data !== '[]') {
+                                    navigator.clipboard.writeText(data).then(() => {
+                                        alert('✅ تم نسخ ' + JSON.parse(data).length + ' مهمة من ذاكرة المتصفح بنجاح! الصقها الآن في المربع أدناه واضغط استيراد.');
+                                    });
+                                } else {
+                                    alert('ℹ️ لا توجد مهام مسجلة في ذاكرة هذا المتصفح حتى الآن.');
+                                }
+                            } catch(e) { alert('خطأ: ' + e); }
+                        " style="padding: 6px 14px; background: #2563eb; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 0.82rem; font-weight: bold;">
+                            📋 نسخ سجل المتصفح إلى الحافظة
+                        </button>
+                    </div>
+                    """,
+                    height=95,
+                )
+            except Exception:
+                pass
+
             up_label = "اختر ملف النسخة الاحتياطية (.json)" if is_ar else "Select backup file (.json)"
             uploaded_file = st.file_uploader(up_label, type=["json"], key="tasks_backup_file_uploader")
+            paste_text = st.text_area(
+                "أو الصق كود النسخة الاحتياطية (JSON) هنا:" if is_ar else "Or paste backup JSON code here:",
+                height=70,
+                key="paste_backup_json_area",
+                placeholder="[{\"task_id\": \"...\", \"subject\": \"...\"}]",
+            )
+
+            raw_import_data = None
             if uploaded_file is not None:
                 try:
-                    imported_items = json.loads(uploaded_file.getvalue().decode("utf-8"))
+                    raw_import_data = json.loads(uploaded_file.getvalue().decode("utf-8"))
+                except Exception as ex:
+                    st.error(f"خطأ في قراءة الملف: {ex}")
+            elif paste_text and paste_text.strip():
+                try:
+                    raw_import_data = json.loads(paste_text.strip())
+                except Exception as ex:
+                    st.error(f"خطأ في قراءة النص: {ex}")
+
+            if raw_import_data is not None:
+                try:
+                    imported_items = raw_import_data
                     if isinstance(imported_items, list):
                         imported_count = 0
+                        hist_file = os.path.join(utils.storage_dir(create=True), "tasks_history.json")
+                        hist_data = []
+                        if os.path.isfile(hist_file):
+                            try:
+                                with open(hist_file, "r", encoding="utf-8") as hf:
+                                    hist_data = json.load(hf)
+                            except Exception:
+                                hist_data = []
+                        if not isinstance(hist_data, list):
+                            hist_data = []
+
                         for it in imported_items:
                             if isinstance(it, dict) and it.get("task_id"):
                                 it_id = it["task_id"]
                                 it_dir = utils.task_dir(it_id)
                                 os.makedirs(it_dir, exist_ok=True)
-                                if it.get("params") or it.get("script"):
-                                    sf_path = os.path.join(it_dir, "script.json")
-                                    with open(sf_path, "w", encoding="utf-8") as sf:
-                                        json.dump({
-                                            "script": it.get("script", ""),
-                                            "params": it.get("params", {}),
-                                        }, sf, ensure_ascii=False, indent=2)
+                                s_content = {
+                                    "script": it.get("script", ""),
+                                    "params": it.get("params", {}),
+                                    "search_terms": it.get("terms", ""),
+                                }
+                                sf_path = os.path.join(it_dir, "script.json")
+                                with open(sf_path, "w", encoding="utf-8") as sf:
+                                    json.dump(s_content, sf, ensure_ascii=False, indent=2)
+
+                                ts_path = os.path.join(it_dir, "task_state.json")
+                                with open(ts_path, "w", encoding="utf-8") as tsf:
+                                    json.dump({
+                                        "task_id": it_id,
+                                        "state": it.get("state", const.TASK_STATE_COMPLETE),
+                                        "progress": it.get("progress", 100),
+                                        "subject": it.get("subject", ""),
+                                        "video_subject": it.get("subject", ""),
+                                        "script": it.get("script", ""),
+                                        "mtime": it.get("mtime", time.time()),
+                                        "params": it.get("params", {}),
+                                    }, tsf, ensure_ascii=False, indent=2)
+
                                 sm.state.update_task(
                                     task_id=it_id,
                                     state=it.get("state", const.TASK_STATE_COMPLETE),
@@ -2226,7 +2458,22 @@ def _render_all_tasks_history_section():
                                     script=it.get("script", ""),
                                     mtime=it.get("mtime", time.time()),
                                 )
+
+                                hist_data = [item for item in hist_data if item.get("task_id") != it_id]
+                                hist_data.insert(0, {
+                                    "task_id": it_id,
+                                    "subject": it.get("subject", ""),
+                                    "state": it.get("state", const.TASK_STATE_COMPLETE),
+                                    "progress": it.get("progress", 100),
+                                    "mtime": it.get("mtime", time.time()),
+                                    "script": it.get("script", ""),
+                                    "params": it.get("params", {}),
+                                })
                                 imported_count += 1
+
+                        with open(hist_file, "w", encoding="utf-8") as hf:
+                            json.dump(hist_data[:100], hf, ensure_ascii=False, indent=2, default=str)
+
                         succ_msg = f"تم بنجاح استيراد {imported_count} مهمة وسكريبت!" if is_ar else f"Successfully imported {imported_count} tasks!"
                         st.success(succ_msg)
                         st.session_state["show_task_import_panel"] = False
@@ -2236,8 +2483,51 @@ def _render_all_tasks_history_section():
                 except Exception as ex:
                     st.error(f"{'فشل استيراد الملف' if is_ar else 'Import failed'}: {ex}")
 
+    # Auto-sync current tasks into browser localStorage
+    if tasks:
+        try:
+            import streamlit.components.v1 as components
+            sync_payload = []
+            for t in tasks[:40]:
+                s_data = _safe_load_task_script(t.get("task_path", ""))
+                sync_payload.append({
+                    "task_id": t["task_id"],
+                    "subject": t.get("subject", ""),
+                    "state": t.get("state"),
+                    "progress": t.get("progress", 100),
+                    "mtime": t.get("mtime", 0),
+                    "script": s_data.get("script", "") or t.get("script", ""),
+                    "params": s_data.get("params", {}),
+                    "video_file": os.path.basename(t.get("video_file", "")) if t.get("video_file") else "",
+                })
+            sync_json_str = json.dumps(sync_payload, ensure_ascii=False)
+            components.html(
+                f"""
+                <script>
+                try {{
+                    const newItems = {sync_json_str};
+                    let saved = JSON.parse(localStorage.getItem('mpt_browser_tasks_archive') || '[]');
+                    const combined = [...newItems, ...saved];
+                    const unique = [];
+                    const seen = new Set();
+                    for (const item of combined) {{
+                        if (item && item.task_id && !seen.has(item.task_id)) {{
+                            seen.add(item.task_id);
+                            unique.push(item);
+                        }}
+                    }}
+                    localStorage.setItem('mpt_browser_tasks_archive', JSON.stringify(unique.slice(0, 100)));
+                }} catch(e) {{}}
+                </script>
+                """,
+                height=0,
+                width=0,
+            )
+        except Exception:
+            pass
+
     if not tasks:
-        no_tasks_msg = "لا توجد مهام سابقة حتى الآن. كل فيديو يتم إنشاؤه سيظهر هنا تلقائياً ويبقى محفوظاً دائماً." if is_ar else "No previous tasks found. Any generated video will be automatically saved here."
+        no_tasks_msg = "لا توجد مهام سابقة على هذا الخادم حالياً. جميع الفيديوهات التي يتم إنشاؤها تُحفظ تلقائياً في السجل وفي ذاكرة المتصفح." if is_ar else "No previous tasks on server. All generated videos are automatically archived."
         st.info(no_tasks_msg)
         return
 
@@ -2248,17 +2538,31 @@ def _render_all_tasks_history_section():
         mtime_str = _format_task_time(t.get("mtime"))
         state = _normalize_task_state(t.get("state"))
         video_file = t.get("video_file", "")
+        if video_file and not os.path.isabs(video_file) and task_path:
+            candidate = os.path.join(task_path, video_file)
+            if os.path.isfile(candidate):
+                video_file = candidate
+        if (not video_file or not os.path.isfile(video_file)) and task_path and os.path.isdir(task_path):
+            found_vid = _find_final_task_video(task_path)
+            if found_vid:
+                video_file = found_vid
+
         has_video = bool(video_file and os.path.isfile(video_file))
         is_processing = state == const.TASK_STATE_PROCESSING
         is_busy = is_processing or tm.is_task_busy(t)
-        has_restore_data = os.path.isfile(os.path.join(task_path, "script.json"))
+        has_restore_data = bool(
+            os.path.isfile(os.path.join(task_path, "script.json"))
+            or os.path.isfile(os.path.join(task_path, "task_state.json"))
+            or t.get("script")
+            or t.get("params")
+        )
 
         if state == const.TASK_STATE_COMPLETE or has_video:
             status_text = "🟢 مكتمل" if is_ar else "🟢 Completed"
         elif is_busy:
             status_text = f"⏳ جاري التوليد ({t.get('progress', 0)}%)" if is_ar else f"⏳ Processing ({t.get('progress', 0)}%)"
         else:
-            status_text = "❌ لم يكتمل" if is_ar else "❌ Incomplete"
+            status_text = "💾 محفوظ بالسجل" if is_ar else "💾 Archived"
 
         safe_key = "".join(ch if ch.isalnum() else "_" for ch in task_id)[:40]
         expander_title = f"{status_text} | 🎬 {subject} ({mtime_str})"
@@ -2296,7 +2600,7 @@ def _render_all_tasks_history_section():
                 elif is_busy:
                     st.info(f"⏳ جاري توليد الفيديو... {t.get('progress', 0)}%" if is_ar else f"⏳ Generating video... {t.get('progress', 0)}%")
                 else:
-                    st.warning("لم يتم العثور على ملف الفيديو النهائي" if is_ar else "No final video file found")
+                    st.info("الاسكريبت والإعدادات محفوظة وجاهزة للاستخدام (يمكنك النقر على 'استعادة السكريبت والإعدادات' بالأسفل لإعادة التوليد بضغطة زر)" if is_ar else "Script & settings preserved. Click Restore below to reload into editor.")
 
             # Action buttons
             b1, b2, b3 = st.columns([2, 2, 1])
@@ -3771,6 +4075,27 @@ def _render_settings_dialog():
                         llm_form_panel.caption(
                             tr("Groq API Key Required for Model List")
                         )
+            elif llm_provider == "gemini":
+                gemini_standard_models = [
+                    "gemini-3.5-flash-lite",
+                    "gemini-3.8-flash",
+                    "gemini-3.7-flash",
+                    "gemini-2.5-flash",
+                    "gemini-2.0-flash",
+                    "gemini-1.5-flash",
+                    "gemini-1.5-pro",
+                ]
+                cur_model = (llm_model_name or "gemini-3.5-flash-lite").strip()
+                if cur_model not in gemini_standard_models:
+                    gemini_standard_models.insert(0, cur_model)
+                sel_idx = gemini_standard_models.index(cur_model)
+                st_llm_model_name = llm_form_panel.selectbox(
+                    tr("Model Name"),
+                    options=gemini_standard_models,
+                    index=sel_idx,
+                    key="gemini_model_name_select",
+                    help="نماذج Google Gemini الرسمية المعتمدة"
+                )
             else:
                 st_llm_model_name = llm_form_panel.text_input(
                     tr("Model Name"),
@@ -7956,18 +8281,18 @@ def _render_subtitle_settings(panel, params):
             if saved_font_name in font_names:
                 saved_font_name_index = font_names.index(saved_font_name)
             font_labels = {
-                "Impact.ttf": "Impact (الأنسب للريلز والشورتس / Shorts & Viral)",
-                "Montserrat-Bold.ttf": "Montserrat Bold (عصري واحترافي / Alex Hormozi Style)",
-                "Roboto-Bold.ttf": "Roboto Bold (واضح وأنيق / YouTube Standard)",
-                "BebasNeue-Regular.ttf": "Bebas Neue (طويل وجذاب / TikTok & Display)",
-                "Poppins-Bold.ttf": "Poppins Bold (هندسي عصري / Modern Geometric)",
-                "Arial.ttf": "Arial (كلاسيكي قياسي / Classic Sans)",
-                "NotoSansArabic.ttf": "Noto Sans Arabic (الخط الافتراضي للعربية)",
+                "NotoSansArabic.ttf": "Noto Sans Arabic (الخط العربي المعتمد والافتراضي)",
+                "Montserrat-Bold.ttf": "Montserrat Bold (خط هورموزي الاحترافي / Alex Hormozi Style)",
+                "Impact.ttf": "Impact (خط عريض بارز / Shorts & Reels Viral)",
+                "BebasNeue-Regular.ttf": "Bebas Neue (خط تيك توك الشهير / TikTok Modern)",
+                "Roboto-Bold.ttf": "Roboto Bold (خط يوتيوب القياسي / YouTube Standard)",
+                "Poppins-Bold.ttf": "Poppins Bold (خط هندسي عصري / Modern Clean)",
+                "Arial.ttf": "Arial (الخط الإنجليزي القياسي / Classic English)",
             }
             params.font_name = stable_selectbox(
                 tr("Font"),
                 options=font_names,
-                default_value=font_names[saved_font_name_index] if font_names else "NotoSansArabic.ttf",
+                default_value=font_names[saved_font_name_index] if (font_names and saved_font_name_index < len(font_names)) else "NotoSansArabic.ttf",
                 format_func=lambda fn: font_labels.get(fn, fn),
                 key="font_name_select",
                 disabled=subtitle_settings_disabled,
@@ -8291,16 +8616,96 @@ def _render_generation_controls(
 
     _render_settings_transfer(params)
 
-    if config.app.get("buffer_enabled", False):
-        buf_pub_val = st.checkbox(
-            tr("Auto-publish to Buffer (Social Media)"),
-            value=st.session_state.get("buffer_publish_toggle", True),
-            key="buffer_publish_toggle",
+    with st.expander("📢 منصة Buffer - الربط والنشر التلقائي (Instagram, TikTok, Shorts, Facebook)", expanded=bool(config.app.get("buffer_enabled", False))):
+        buf_enabled = config.app.get("buffer_enabled", False)
+        buf_enabled_val = st.checkbox(
+            "تفعيل النشر التلقائي عبر Buffer عند اكتمال الفيديو",
+            value=buf_enabled,
+            key="main_buffer_enabled_checkbox",
         )
+        if buf_enabled_val != buf_enabled:
+            _set_runtime_config("app", "buffer_enabled", buf_enabled_val)
+
         try:
-            params.buffer_publish = buf_pub_val
+            params.buffer_publish = buf_enabled_val
         except Exception:
             pass
+
+        buf_token = st.text_input(
+            "رمز الوصول الخاص بحساب Buffer (Personal Access Token)",
+            value=config.app.get("buffer_access_token", ""),
+            type="password",
+            help="احصل على المفتاح من https://publish.buffer.com/settings/api",
+            key="main_buffer_token_input",
+        )
+        if buf_token != config.app.get("buffer_access_token", ""):
+            _set_runtime_config("app", "buffer_access_token", buf_token)
+
+        col_b1, col_b2 = st.columns([1, 1])
+        with col_b1:
+            fetch_clicked = st.button("🔄 جلب وتحديث القنوات المرتبطة", key="main_buffer_fetch_btn", use_container_width=True)
+        with col_b2:
+            st.markdown("[🔗 إعدادات المفتاح في Buffer](https://publish.buffer.com/settings/api)", unsafe_allow_html=True)
+
+        current_tok = (buf_token or config.app.get("buffer_access_token", "")).strip()
+        if fetch_clicked:
+            if not current_tok:
+                st.warning("يرجى إدخال مفتاح الوصول (Buffer Access Token) أولاً.")
+            else:
+                with st.spinner("جاري الاتصال بـ Buffer وجلب القنوات والصفحات..."):
+                    res = buffer_service.test_connection(current_tok)
+                    if res.get("success"):
+                        st.session_state["buffer_cached_profiles"] = res.get("profiles", [])
+                        st.session_state["buffer_last_fetch_success"] = True
+                        st.session_state["buffer_fetch_message"] = res.get("message", "تم جلب القنوات بنجاح")
+                    else:
+                        st.session_state["buffer_cached_profiles"] = []
+                        st.session_state["buffer_last_fetch_success"] = False
+                        st.session_state["buffer_fetch_message"] = res.get("error", "فشل الاتصال بـ Buffer")
+
+        if "buffer_cached_profiles" not in st.session_state and current_tok:
+            try:
+                profiles_init = buffer_service.get_profiles(current_tok)
+                if profiles_init:
+                    st.session_state["buffer_cached_profiles"] = profiles_init
+                    st.session_state["buffer_last_fetch_success"] = True
+            except Exception:
+                pass
+
+        cached_profiles = st.session_state.get("buffer_cached_profiles", [])
+        if st.session_state.get("buffer_fetch_message"):
+            if st.session_state.get("buffer_last_fetch_success"):
+                st.success(st.session_state["buffer_fetch_message"])
+            else:
+                st.error(st.session_state["buffer_fetch_message"])
+
+        if cached_profiles:
+            st.markdown("##### 📱 القنوات والصفحات المتصلة بحسابك:")
+            profile_options = {}
+            for p in cached_profiles:
+                p_id = p.get("id")
+                srv = p.get("service", "").capitalize()
+                formatted_srv = p.get("formatted_service", srv)
+                user_desc = p.get("formatted_username") or p.get("service_username") or "حساب"
+                label = f"{formatted_srv}: {user_desc}"
+                profile_options[p_id] = label
+
+            saved_targets = [pid for pid in config.app.get("buffer_profile_ids", []) if pid in profile_options]
+            if not saved_targets and profile_options:
+                saved_targets = list(profile_options.keys())
+                _set_runtime_config("app", "buffer_profile_ids", saved_targets)
+
+            selected_channels = st.multiselect(
+                "اختر القنوات المستهدفة لنشر الفيديو إليها تلقائياً:",
+                options=list(profile_options.keys()),
+                default=saved_targets,
+                format_func=lambda pid: profile_options.get(pid, pid),
+                key="main_buffer_channels_multiselect",
+            )
+            if selected_channels != config.app.get("buffer_profile_ids", []):
+                _set_runtime_config("app", "buffer_profile_ids", selected_channels)
+        elif not current_tok:
+            st.info("قم بإدخال رمز الوصول الخاص بحساب Buffer واضغط 'جلب القنوات' لعرض حساباتك المرتبطة (انستجرام، تيك توك، يوتيوب، فيسبوك...).")
 
     start_button = st.button(
         tr("Generate Video"),
