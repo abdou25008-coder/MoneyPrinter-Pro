@@ -201,7 +201,7 @@ LOOMLOOM_VIDEO_MODEL_PRICES = (
 )
 DEFAULT_SUBTITLE_SETTINGS = {
     "subtitle_enabled": True,
-    "font_name": "MicrosoftYaHeiBold.ttc",
+    "font_name": "NotoSansArabic.ttf",
     "subtitle_position": "bottom",
     "subtitle_display_mode": "sentence",
     "subtitle_animation": "none",
@@ -1991,26 +1991,31 @@ support_locales = [
 # -----------------------------------------------------------------------------
 
 
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=10, show_spinner=False)
 def get_all_fonts():
-    fonts = []
+    available = set()
     if os.path.exists(font_dir):
         for root, dirs, files in os.walk(font_dir):
             for file in files:
                 if file.endswith(".ttf") or file.endswith(".ttc"):
-                    fonts.append(file)
-    if not fonts:
-        fonts = [
-            "Impact.ttf",
-            "Montserrat-Bold.ttf",
-            "Roboto-Bold.ttf",
-            "BebasNeue-Regular.ttf",
-            "Poppins-Bold.ttf",
-            "Arial.ttf",
-            "NotoSansArabic.ttf",
-        ]
-    fonts.sort()
-    return fonts
+                    available.add(file)
+    default_order = [
+        "NotoSansArabic.ttf",
+        "Montserrat-Bold.ttf",
+        "Impact.ttf",
+        "BebasNeue-Regular.ttf",
+        "Roboto-Bold.ttf",
+        "Poppins-Bold.ttf",
+        "Arial.ttf",
+    ]
+    result = []
+    for f in default_order:
+        if f in available or not available:
+            result.append(f)
+    for f in sorted(available):
+        if f not in result:
+            result.append(f)
+    return result
 
 
 @st.cache_data(ttl=30, show_spinner=False)
@@ -8276,18 +8281,18 @@ def _render_subtitle_settings(panel, params):
             if saved_font_name in font_names:
                 saved_font_name_index = font_names.index(saved_font_name)
             font_labels = {
-                "Impact.ttf": "Impact (الأنسب للريلز والشورتس / Shorts & Viral)",
-                "Montserrat-Bold.ttf": "Montserrat Bold (عصري واحترافي / Alex Hormozi Style)",
-                "Roboto-Bold.ttf": "Roboto Bold (واضح وأنيق / YouTube Standard)",
-                "BebasNeue-Regular.ttf": "Bebas Neue (طويل وجذاب / TikTok & Display)",
-                "Poppins-Bold.ttf": "Poppins Bold (هندسي عصري / Modern Geometric)",
-                "Arial.ttf": "Arial (كلاسيكي قياسي / Classic Sans)",
-                "NotoSansArabic.ttf": "Noto Sans Arabic (الخط الافتراضي للعربية)",
+                "NotoSansArabic.ttf": "Noto Sans Arabic (الخط العربي المعتمد والافتراضي)",
+                "Montserrat-Bold.ttf": "Montserrat Bold (خط هورموزي الاحترافي / Alex Hormozi Style)",
+                "Impact.ttf": "Impact (خط عريض بارز / Shorts & Reels Viral)",
+                "BebasNeue-Regular.ttf": "Bebas Neue (خط تيك توك الشهير / TikTok Modern)",
+                "Roboto-Bold.ttf": "Roboto Bold (خط يوتيوب القياسي / YouTube Standard)",
+                "Poppins-Bold.ttf": "Poppins Bold (خط هندسي عصري / Modern Clean)",
+                "Arial.ttf": "Arial (الخط الإنجليزي القياسي / Classic English)",
             }
             params.font_name = stable_selectbox(
                 tr("Font"),
                 options=font_names,
-                default_value=font_names[saved_font_name_index] if font_names else "NotoSansArabic.ttf",
+                default_value=font_names[saved_font_name_index] if (font_names and saved_font_name_index < len(font_names)) else "NotoSansArabic.ttf",
                 format_func=lambda fn: font_labels.get(fn, fn),
                 key="font_name_select",
                 disabled=subtitle_settings_disabled,
@@ -8611,16 +8616,96 @@ def _render_generation_controls(
 
     _render_settings_transfer(params)
 
-    if config.app.get("buffer_enabled", False):
-        buf_pub_val = st.checkbox(
-            tr("Auto-publish to Buffer (Social Media)"),
-            value=st.session_state.get("buffer_publish_toggle", True),
-            key="buffer_publish_toggle",
+    with st.expander("📢 منصة Buffer - الربط والنشر التلقائي (Instagram, TikTok, Shorts, Facebook)", expanded=bool(config.app.get("buffer_enabled", False))):
+        buf_enabled = config.app.get("buffer_enabled", False)
+        buf_enabled_val = st.checkbox(
+            "تفعيل النشر التلقائي عبر Buffer عند اكتمال الفيديو",
+            value=buf_enabled,
+            key="main_buffer_enabled_checkbox",
         )
+        if buf_enabled_val != buf_enabled:
+            _set_runtime_config("app", "buffer_enabled", buf_enabled_val)
+
         try:
-            params.buffer_publish = buf_pub_val
+            params.buffer_publish = buf_enabled_val
         except Exception:
             pass
+
+        buf_token = st.text_input(
+            "رمز الوصول الخاص بحساب Buffer (Personal Access Token)",
+            value=config.app.get("buffer_access_token", ""),
+            type="password",
+            help="احصل على المفتاح من https://publish.buffer.com/settings/api",
+            key="main_buffer_token_input",
+        )
+        if buf_token != config.app.get("buffer_access_token", ""):
+            _set_runtime_config("app", "buffer_access_token", buf_token)
+
+        col_b1, col_b2 = st.columns([1, 1])
+        with col_b1:
+            fetch_clicked = st.button("🔄 جلب وتحديث القنوات المرتبطة", key="main_buffer_fetch_btn", use_container_width=True)
+        with col_b2:
+            st.markdown("[🔗 إعدادات المفتاح في Buffer](https://publish.buffer.com/settings/api)", unsafe_allow_html=True)
+
+        current_tok = (buf_token or config.app.get("buffer_access_token", "")).strip()
+        if fetch_clicked:
+            if not current_tok:
+                st.warning("يرجى إدخال مفتاح الوصول (Buffer Access Token) أولاً.")
+            else:
+                with st.spinner("جاري الاتصال بـ Buffer وجلب القنوات والصفحات..."):
+                    res = buffer_service.test_connection(current_tok)
+                    if res.get("success"):
+                        st.session_state["buffer_cached_profiles"] = res.get("profiles", [])
+                        st.session_state["buffer_last_fetch_success"] = True
+                        st.session_state["buffer_fetch_message"] = res.get("message", "تم جلب القنوات بنجاح")
+                    else:
+                        st.session_state["buffer_cached_profiles"] = []
+                        st.session_state["buffer_last_fetch_success"] = False
+                        st.session_state["buffer_fetch_message"] = res.get("error", "فشل الاتصال بـ Buffer")
+
+        if "buffer_cached_profiles" not in st.session_state and current_tok:
+            try:
+                profiles_init = buffer_service.get_profiles(current_tok)
+                if profiles_init:
+                    st.session_state["buffer_cached_profiles"] = profiles_init
+                    st.session_state["buffer_last_fetch_success"] = True
+            except Exception:
+                pass
+
+        cached_profiles = st.session_state.get("buffer_cached_profiles", [])
+        if st.session_state.get("buffer_fetch_message"):
+            if st.session_state.get("buffer_last_fetch_success"):
+                st.success(st.session_state["buffer_fetch_message"])
+            else:
+                st.error(st.session_state["buffer_fetch_message"])
+
+        if cached_profiles:
+            st.markdown("##### 📱 القنوات والصفحات المتصلة بحسابك:")
+            profile_options = {}
+            for p in cached_profiles:
+                p_id = p.get("id")
+                srv = p.get("service", "").capitalize()
+                formatted_srv = p.get("formatted_service", srv)
+                user_desc = p.get("formatted_username") or p.get("service_username") or "حساب"
+                label = f"{formatted_srv}: {user_desc}"
+                profile_options[p_id] = label
+
+            saved_targets = [pid for pid in config.app.get("buffer_profile_ids", []) if pid in profile_options]
+            if not saved_targets and profile_options:
+                saved_targets = list(profile_options.keys())
+                _set_runtime_config("app", "buffer_profile_ids", saved_targets)
+
+            selected_channels = st.multiselect(
+                "اختر القنوات المستهدفة لنشر الفيديو إليها تلقائياً:",
+                options=list(profile_options.keys()),
+                default=saved_targets,
+                format_func=lambda pid: profile_options.get(pid, pid),
+                key="main_buffer_channels_multiselect",
+            )
+            if selected_channels != config.app.get("buffer_profile_ids", []):
+                _set_runtime_config("app", "buffer_profile_ids", selected_channels)
+        elif not current_tok:
+            st.info("قم بإدخال رمز الوصول الخاص بحساب Buffer واضغط 'جلب القنوات' لعرض حساباتك المرتبطة (انستجرام، تيك توك، يوتيوب، فيسبوك...).")
 
     start_button = st.button(
         tr("Generate Video"),
