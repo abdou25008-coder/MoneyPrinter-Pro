@@ -387,13 +387,20 @@ def _generate_response(prompt: str, app_config=None) -> str:
             )
 
             clean_key = str(api_key or "").strip().strip('"').strip("'")
-            # Auto-correct nonexistent or deprecated model names (e.g. user typed gemini-3.5-flash-lite or gemini-pro)
-            effective_model = model_name
-            if not effective_model or "3." in effective_model or "gemini-pro" == effective_model:
-                effective_model = "gemini-2.5-flash"
+            effective_model = (model_name or "").strip()
+            if not effective_model or effective_model in ("gemini-pro", "gemini-1.0-pro"):
+                effective_model = "gemini-3.5-flash-lite"
 
             candidate_models = [effective_model]
-            for fallback in ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"):
+            for fallback in (
+                "gemini-3.5-flash-lite",
+                "gemini-3.8-flash",
+                "gemini-3.7-flash",
+                "gemini-2.5-flash",
+                "gemini-2.0-flash",
+                "gemini-1.5-flash",
+                "gemini-1.5-pro",
+            ):
                 if fallback not in candidate_models:
                     candidate_models.append(fallback)
 

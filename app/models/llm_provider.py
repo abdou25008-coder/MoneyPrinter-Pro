@@ -253,7 +253,7 @@ LLM_PROVIDER_REGISTRY = (
         "Google Gemini",
         adapter="gemini",
         api_key_url="https://aistudio.google.com/app/apikey",
-        default_model="gemini-2.5-flash",
+        default_model="gemini-3.5-flash-lite",
         requires_base_url=False,
         show_base_url=False,
         deprecated_models=("gemini-pro", "gemini-1.0-pro"),
