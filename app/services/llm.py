@@ -9,6 +9,7 @@ import tempfile
 from time import perf_counter
 from typing import List
 
+import requests
 from loguru import logger
 from openai import AzureOpenAI, OpenAI
 from openai.types.chat import ChatCompletion
@@ -407,50 +408,13 @@ def _generate_response(prompt: str, app_config=None) -> str:
             generated_text = None
             last_error = None
 
-            # 1. Try modern google-genai client
-            try:
-                with genai.Client(
-                    api_key=clean_key,
-                    http_options=http_options,
-                ) as client:
-                    for candidate in candidate_models:
-                        try:
-                            logger.info(f"calling gemini api with model: {candidate}")
-                            response = client.models.generate_content(
-                                model=candidate,
-                                contents=prompt,
-                                config=generation_config,
-                            )
-                            generated_text = response.text
-                            if generated_text:
-                                logger.info(f"gemini model {candidate} successfully generated content")
-                                break
-                        except Exception as exc:
-                            last_error = exc
-                            err_msg = str(exc)
-                            if any(k in err_msg for k in ("429", "RESOURCE_EXHAUSTED", "404", "NotFound", "not found", "INVALID_ARGUMENT")):
-                                logger.warning(
-                                    f"gemini model '{candidate}' availability error: {err_msg}. Trying fallback model..."
-                                )
-                                continue
-                            if any(k in err_msg for k in ("UNAUTHENTICATED", "ACCESS_TOKEN_TYPE_UNSUPPORTED", "401")):
-                                logger.warning(
-                                    f"gemini SDK authentication issue with key ({err_msg}). Will attempt direct Google REST API fallback..."
-                                )
-                                break
-                            raise
-            except Exception as client_err:
-                last_error = client_err
-                logger.warning(f"gemini client execution notice: {client_err}. Trying direct REST fallback...")
-
-            # 2. Resilient Direct REST API Fallback
-            # Google AI Studio transitioned to 'AQ.' prefixed keys which older SDKs or token parsers
-            # may misidentify as OAuth Bearer tokens causing ACCESS_TOKEN_TYPE_UNSUPPORTED 401 errors.
-            # Direct REST with 'x-goog-api-key' works with 100% reliability for both AIza and AQ keys.
-            if not generated_text and clean_key:
+            # 1. Primary Strategy: Direct Google REST API with x-goog-api-key header
+            # This is 100% resilient across all key types (both AIza and new AQ keys) and completely
+            # avoids the google-genai SDK bug that misidentifies AQ keys as OAuth Bearer tokens (401 ACCESS_TOKEN_TYPE_UNSUPPORTED).
+            if clean_key:
                 for candidate in candidate_models:
                     try:
-                        logger.info(f"calling gemini direct REST endpoint fallback with model: {candidate}")
+                        logger.info(f"calling gemini direct REST endpoint with model: {candidate}")
                         rest_url = f"https://generativelanguage.googleapis.com/v1beta/models/{candidate}:generateContent"
                         headers = {
                             "Content-Type": "application/json",
@@ -483,11 +447,43 @@ def _generate_response(prompt: str, app_config=None) -> str:
                         else:
                             resp_err_text = rest_resp.text
                             logger.warning(f"gemini direct REST [{candidate}] returned {rest_resp.status_code}: {resp_err_text[:200]}")
+                            last_error = RuntimeError(f"Google Gemini REST [{rest_resp.status_code}]: {resp_err_text[:300]}")
                             if any(k in resp_err_text for k in ("429", "RESOURCE_EXHAUSTED", "404", "NotFound", "not found", "INVALID_ARGUMENT")):
                                 continue
                     except Exception as rest_exc:
                         logger.warning(f"gemini direct REST exception: {rest_exc}")
+                        last_error = rest_exc
                         continue
+
+            # 2. Fallback Strategy: google-genai SDK client (if direct REST did not produce output)
+            if not generated_text and clean_key:
+                try:
+                    with genai.Client(
+                        api_key=clean_key,
+                        http_options=http_options,
+                    ) as client:
+                        for candidate in candidate_models:
+                            try:
+                                logger.info(f"calling gemini SDK fallback with model: {candidate}")
+                                response = client.models.generate_content(
+                                    model=candidate,
+                                    contents=prompt,
+                                    config=generation_config,
+                                )
+                                generated_text = response.text
+                                if generated_text:
+                                    logger.info(f"gemini SDK fallback model {candidate} successfully generated content")
+                                    break
+                            except Exception as exc:
+                                last_error = exc
+                                err_msg = str(exc)
+                                if any(k in err_msg for k in ("429", "RESOURCE_EXHAUSTED", "404", "NotFound", "not found", "INVALID_ARGUMENT")):
+                                    continue
+                                break
+                except Exception as client_err:
+                    if not last_error:
+                        last_error = client_err
+                    logger.warning(f"gemini SDK fallback execution notice: {client_err}")
 
             if not generated_text:
                 if last_error:
