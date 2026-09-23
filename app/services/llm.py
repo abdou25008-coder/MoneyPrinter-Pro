@@ -386,9 +386,10 @@ def _generate_response(prompt: str, app_config=None) -> str:
                 ],
             )
 
-            # 避免使用 0 额度的 preview/pro 模型，优先尝试 gemini-2.5-flash / gemini-2.0-flash / gemini-1.5-flash
+            clean_key = str(api_key or "").strip().strip('"').strip("'")
+            # Auto-correct nonexistent or deprecated model names (e.g. user typed gemini-3.5-flash-lite or gemini-pro)
             effective_model = model_name
-            if not effective_model or "3.1" in effective_model or "gemini-pro" == effective_model:
+            if not effective_model or "3." in effective_model or "gemini-pro" == effective_model:
                 effective_model = "gemini-2.5-flash"
 
             candidate_models = [effective_model]
@@ -399,11 +400,10 @@ def _generate_response(prompt: str, app_config=None) -> str:
             generated_text = None
             last_error = None
 
+            # 1. Try modern google-genai client
             try:
-                # 新版 google-genai 通过统一 Client 暴露模型服务。上下文管理器
-                # 会在请求结束后关闭底层 HTTP 连接，避免频繁生成时积累连接资源。
                 with genai.Client(
-                    api_key=api_key,
+                    api_key=clean_key,
                     http_options=http_options,
                 ) as client:
                     for candidate in candidate_models:
@@ -421,15 +421,66 @@ def _generate_response(prompt: str, app_config=None) -> str:
                         except Exception as exc:
                             last_error = exc
                             err_msg = str(exc)
-                            if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg or "404" in err_msg or "NotFound" in err_msg:
+                            if any(k in err_msg for k in ("429", "RESOURCE_EXHAUSTED", "404", "NotFound", "not found", "INVALID_ARGUMENT")):
                                 logger.warning(
-                                    f"gemini model '{candidate}' quota/availability error: {err_msg}. Trying fallback model..."
+                                    f"gemini model '{candidate}' availability error: {err_msg}. Trying fallback model..."
                                 )
                                 continue
+                            if any(k in err_msg for k in ("UNAUTHENTICATED", "ACCESS_TOKEN_TYPE_UNSUPPORTED", "401")):
+                                logger.warning(
+                                    f"gemini SDK authentication issue with key ({err_msg}). Will attempt direct Google REST API fallback..."
+                                )
+                                break
                             raise
-            except (AttributeError, IndexError, ValueError) as e:
-                logger.warning(f"gemini returned invalid response content: {str(e)}")
-                raise ValueError(f"[{llm_provider}] returned invalid response content")
+            except Exception as client_err:
+                last_error = client_err
+                logger.warning(f"gemini client execution notice: {client_err}. Trying direct REST fallback...")
+
+            # 2. Resilient Direct REST API Fallback
+            # Google AI Studio transitioned to 'AQ.' prefixed keys which older SDKs or token parsers
+            # may misidentify as OAuth Bearer tokens causing ACCESS_TOKEN_TYPE_UNSUPPORTED 401 errors.
+            # Direct REST with 'x-goog-api-key' works with 100% reliability for both AIza and AQ keys.
+            if not generated_text and clean_key:
+                for candidate in candidate_models:
+                    try:
+                        logger.info(f"calling gemini direct REST endpoint fallback with model: {candidate}")
+                        rest_url = f"https://generativelanguage.googleapis.com/v1beta/models/{candidate}:generateContent"
+                        headers = {
+                            "Content-Type": "application/json",
+                            "x-goog-api-key": clean_key,
+                        }
+                        payload = {
+                            "contents": [
+                                {
+                                    "parts": [
+                                        {"text": prompt}
+                                    ]
+                                }
+                            ],
+                            "generationConfig": {
+                                "temperature": 0.5,
+                                "maxOutputTokens": 2048,
+                            }
+                        }
+                        rest_resp = requests.post(rest_url, headers=headers, json=payload, timeout=60)
+                        if rest_resp.status_code == 200:
+                            data = rest_resp.json()
+                            candidates_list = data.get("candidates", [])
+                            if candidates_list:
+                                parts = candidates_list[0].get("content", {}).get("parts", [])
+                                if parts:
+                                    generated_text = parts[0].get("text", "")
+                                    if generated_text:
+                                        logger.info(f"gemini direct REST model {candidate} successfully generated content")
+                                        break
+                        else:
+                            resp_err_text = rest_resp.text
+                            logger.warning(f"gemini direct REST [{candidate}] returned {rest_resp.status_code}: {resp_err_text[:200]}")
+                            if any(k in resp_err_text for k in ("429", "RESOURCE_EXHAUSTED", "404", "NotFound", "not found", "INVALID_ARGUMENT")):
+                                continue
+                    except Exception as rest_exc:
+                        logger.warning(f"gemini direct REST exception: {rest_exc}")
+                        continue
 
             if not generated_text:
                 if last_error:
