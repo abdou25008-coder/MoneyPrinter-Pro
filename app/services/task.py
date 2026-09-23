@@ -295,6 +295,50 @@ def _mark_task_failed(
         error=failure["error"],
         **failure_details,
     )
+
+    try:
+        t_dir = utils.task_dir(task_id)
+        os.makedirs(t_dir, exist_ok=True)
+        with open(os.path.join(t_dir, "task_state.json"), "w", encoding="utf-8") as tsf:
+            json.dump({
+                "task_id": task_id,
+                "state": const.TASK_STATE_FAILED,
+                "progress": progress,
+                "failed_stage": stage,
+                "error": message,
+                "mtime": time.time(),
+                **failure_details,
+            }, tsf, ensure_ascii=False, indent=2, default=str)
+    except Exception as exc:
+        logger.warning(f"failed to write task_state.json on failure: {exc}")
+
+    try:
+        hist_file = os.path.join(utils.storage_dir(create=True), "tasks_history.json")
+        hist_data = []
+        if os.path.isfile(hist_file):
+            try:
+                with open(hist_file, "r", encoding="utf-8") as hf:
+                    hist_data = json.load(hf)
+            except Exception:
+                hist_data = []
+        if not isinstance(hist_data, list):
+            hist_data = []
+        hist_data = [item for item in hist_data if item.get("task_id") != task_id]
+        hist_data.insert(0, {
+            "task_id": task_id,
+            "subject": (existing_task or {}).get("video_subject") or task_id,
+            "state": const.TASK_STATE_FAILED,
+            "progress": progress,
+            "mtime": time.time(),
+            "error": message,
+            "script": (existing_task or {}).get("script", ""),
+            "params": (existing_task or {}).get("params", {}),
+        })
+        with open(hist_file, "w", encoding="utf-8") as hf:
+            json.dump(hist_data[:100], hf, ensure_ascii=False, indent=2, default=str)
+    except Exception as exc:
+        logger.warning(f"failed to update tasks_history.json on failure: {exc}")
+
     return failure
 
 
@@ -1236,9 +1280,13 @@ def _run_cross_post(
                         "success": False,
                         "error": "Upload-Post returned an invalid response",
                     }
-                results.append(result)
             if getattr(params, "buffer_publish", False) or config.app.get("buffer_enabled", False):
-                buf_res = buffer_publisher.publish_video(video_path=video_path, text=post_title)
+                buf_targets = getattr(params, "buffer_profile_ids", None) or config.app.get("buffer_profile_ids", [])
+                buf_res = buffer_publisher.publish_video(
+                    video_path=video_path,
+                    text=post_title,
+                    profile_ids=buf_targets,
+                )
                 results.append(buf_res)
 
         failures = [result for result in results if not result.get("success")]
@@ -1674,7 +1722,12 @@ def _run_pipeline(
         )
     cross_post_state = const.CROSS_POST_STATE_PENDING if should_cross_post else None
 
+    task_subject = params.video_subject or (video_script[:50] if video_script else task_id)
+    params_dict = params.model_dump() if hasattr(params, "model_dump") else (params.dict() if hasattr(params, "dict") else {})
+    completion_time = time.time()
+
     kwargs = {
+        "video_subject": task_subject,
         "videos": final_video_paths,
         "combined_videos": combined_video_paths,
         "script": video_script,
@@ -1688,10 +1741,55 @@ def _run_pipeline(
         "cross_post_error": None,
         "cross_post_owner": _cross_post_process_owner if should_cross_post else None,
         "warnings": generation_warnings or None,
+        "params": params_dict,
+        "mtime": completion_time,
     }
     sm.state.update_task(
         task_id, state=const.TASK_STATE_COMPLETE, progress=100, **kwargs
     )
+
+    # Persist task_state.json directly inside task directory for bulletproof offline discovery
+    try:
+        t_dir = utils.task_dir(task_id)
+        with open(os.path.join(t_dir, "task_state.json"), "w", encoding="utf-8") as tsf:
+            json.dump({
+                "task_id": task_id,
+                "state": const.TASK_STATE_COMPLETE,
+                "progress": 100,
+                **kwargs,
+            }, tsf, ensure_ascii=False, indent=2, default=str)
+    except Exception as exc:
+        logger.warning(f"failed to write task_state.json: {exc}")
+
+    # Append to persistent tasks_history.json
+    try:
+        hist_file = os.path.join(utils.storage_dir(create=True), "tasks_history.json")
+        hist_data = []
+        if os.path.isfile(hist_file):
+            try:
+                with open(hist_file, "r", encoding="utf-8") as hf:
+                    hist_data = json.load(hf)
+            except Exception:
+                hist_data = []
+        if not isinstance(hist_data, list):
+            hist_data = []
+        hist_data = [item for item in hist_data if item.get("task_id") != task_id]
+        hist_data.insert(0, {
+            "task_id": task_id,
+            "subject": task_subject,
+            "state": const.TASK_STATE_COMPLETE,
+            "progress": 100,
+            "mtime": completion_time,
+            "script": video_script,
+            "terms": video_terms,
+            "videos": final_video_paths,
+            "video_file": final_video_paths[0] if final_video_paths else "",
+            "params": params_dict,
+        })
+        with open(hist_file, "w", encoding="utf-8") as hf:
+            json.dump(hist_data[:100], hf, ensure_ascii=False, indent=2, default=str)
+    except Exception as exc:
+        logger.warning(f"failed to update tasks_history.json: {exc}")
 
     if should_cross_post:
         scheduling_error = _schedule_cross_post(

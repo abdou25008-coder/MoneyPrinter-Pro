@@ -38,12 +38,24 @@ def _write_json_atomic(target: Path, payload: Mapping[str, Any]) -> None:
             delete=False,
         ) as temp_file:
             temp_path = Path(temp_file.name)
+
+            def _safe_serializer(val):
+                if hasattr(val, "model_dump"):
+                    return val.model_dump()
+                if hasattr(val, "dict"):
+                    return val.dict()
+                if hasattr(val, "value"):
+                    return val.value
+                if hasattr(val, "__dict__"):
+                    return val.__dict__
+                return str(val)
+
             json.dump(
                 payload,
                 temp_file,
                 ensure_ascii=False,
                 indent=4,
-                default=lambda value: value.__dict__,
+                default=_safe_serializer,
             )
             temp_file.write("\n")
             temp_file.flush()

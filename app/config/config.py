@@ -481,10 +481,14 @@ def load_config():
         app_cfg["pixabay_api_keys"] = ["57587496-711d625e0c5d82a892c0b4682"]
     if not app_cfg.get("gemini_api_key"):
         app_cfg["gemini_api_key"] = "AQ.Ab8RN6KmZypdW64Mq_o-6DArKZ-awH0ICtKuHu9dgsCsw-DE6w"
-    if not app_cfg.get("upload_post_api_key"):
-        app_cfg["upload_post_api_key"] = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbWFpbCI6ImY2MDA2ODg3QGdtYWlsLmNvbSIsImV4cCI6NDk0Mjk4NDM3OSwianRpIjoiM2MxOGI3NzYtZGRjOS00N2ZjLTg0OGMtNTIzYWZhNWY0N2ZlIn0.h4z_G2NaQm91U0LbOqs1ZpEj1itike3XB7cf7UM_6Uw"
-        app_cfg["upload_post_username"] = "f6006887@gmail.com"
-        app_cfg["upload_post_enabled"] = True
+    if not app_cfg.get("gemini_model_name") or "3.1" in str(app_cfg.get("gemini_model_name", "")):
+        app_cfg["gemini_model_name"] = "gemini-2.5-flash"
+    app_cfg.setdefault("upload_post_enabled", False)
+    app_cfg.setdefault("upload_post_api_key", "")
+    app_cfg.setdefault("upload_post_username", "")
+    app_cfg.setdefault("buffer_enabled", False)
+    app_cfg.setdefault("buffer_access_token", "")
+    app_cfg.setdefault("buffer_profile_ids", [])
 
     eleven_cfg = cfg.setdefault("elevenlabs", {})
     if not eleven_cfg.get("api_key"):

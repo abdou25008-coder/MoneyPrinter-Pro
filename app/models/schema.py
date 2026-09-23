@@ -116,7 +116,7 @@ class VideoParams(BaseModel):
     video_clip_speed: Optional[float] = 1.0
     match_materials_to_script: bool = False
     video_count: int = Field(default=1, ge=1)
-    video_target_duration: int = Field(default=0, ge=0)  # Target duration in seconds (0=auto, 30, 60, 90, 120, 180, 300)
+    video_target_duration: int = Field(default=0, ge=0)  # Target duration in seconds (0=auto, 30, 60, 90, 120, 180, 300, 420, 600, 720, 900)
 
     video_source: Optional[str] = "pexels"
     image_provider: Optional[str] = "pollinations"  # pollinations, gemini_imagen
