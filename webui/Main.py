@@ -4070,6 +4070,27 @@ def _render_settings_dialog():
                         llm_form_panel.caption(
                             tr("Groq API Key Required for Model List")
                         )
+            elif llm_provider == "gemini":
+                gemini_standard_models = [
+                    "gemini-3.5-flash-lite",
+                    "gemini-3.8-flash",
+                    "gemini-3.7-flash",
+                    "gemini-2.5-flash",
+                    "gemini-2.0-flash",
+                    "gemini-1.5-flash",
+                    "gemini-1.5-pro",
+                ]
+                cur_model = (llm_model_name or "gemini-3.5-flash-lite").strip()
+                if cur_model not in gemini_standard_models:
+                    gemini_standard_models.insert(0, cur_model)
+                sel_idx = gemini_standard_models.index(cur_model)
+                st_llm_model_name = llm_form_panel.selectbox(
+                    tr("Model Name"),
+                    options=gemini_standard_models,
+                    index=sel_idx,
+                    key="gemini_model_name_select",
+                    help="نماذج Google Gemini الرسمية المعتمدة"
+                )
             else:
                 st_llm_model_name = llm_form_panel.text_input(
                     tr("Model Name"),
