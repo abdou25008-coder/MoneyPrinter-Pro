@@ -8870,18 +8870,74 @@ def _render_generation_controls(
                     _set_runtime_config("app", "buffer_profile_ids_2", selected_channels_2)
 
         with buf_tab3:
-            st.markdown("##### 🌐 الربط والتكامل المباشر مع المنصات الاجتماعية:")
-            st.caption("يمكنك ربط القنوات بحساب Buffer مباشرة لتفادي الحظر والنشر التلقائي بضغطة زر واحدة:")
+            st.markdown("##### 🌐 الربط والتكامل المباشر مع YouTube والمنصات الاجتماعية:")
+            st.caption("إدارة الربط المباشر بدون وسيط لرفع ونشر الفيديوهات مباشرة:")
+
+            # YouTube Direct Section
+            with st.container(border=True):
+                st.markdown("###### ▶️ تكامل YouTube Data API v3 (الربط المباشر):")
+                from app.services.youtube_publisher import youtube_service
+                yt_is_auth = youtube_service.is_authenticated()
+                
+                yt_col1, yt_col2 = st.columns([1.5, 1])
+                with yt_col1:
+                    yt_direct_enabled = st.checkbox(
+                        "تفعيل النشر المباشر إلى YouTube Shorts عند اكتمال الفيديو",
+                        value=config.app.get("youtube_direct_enabled", True),
+                        key="yt_direct_enabled_checkbox",
+                    )
+                    if yt_direct_enabled != config.app.get("youtube_direct_enabled", True):
+                        _set_runtime_config("app", "youtube_direct_enabled", yt_direct_enabled)
+
+                with yt_col2:
+                    if yt_is_auth:
+                        ch_info = youtube_service.get_channel_info()
+                        ch_name = ch_info.get("channel_name", "قناتك على YouTube")
+                        st.success(f"✅ متصل بالقناة: **{ch_name}**")
+                    else:
+                        st.info("⚪ غير موثق حالياً")
+
+                if not yt_is_auth:
+                    st.markdown("""
+                    **لربط وتوثيق قناتك على يوتيوب في خطوتين:**
+                    1. اضغط على رابط المصادقة بالأسفل لتسجيل الدخول بحساب Google والسماح بنشر الفيديوهات.
+                    2. انسخ رمز التحقق (Authorization Code) وضعه في الحقل واضغط **توثيق القناة**.
+                    """)
+                    try:
+                        auth_link = youtube_service.get_auth_url()
+                        st.markdown(f"[🔗 اضغط هنا لتسجيل الدخول والموافقة في Google]({auth_link})", unsafe_allow_html=True)
+                    except Exception as yt_url_err:
+                        st.caption(f"تأكد من إعدادات Google Cloud: {yt_url_err}")
+
+                    code_c1, code_c2 = st.columns([2.5, 1])
+                    with code_c1:
+                        auth_code_input = st.text_input("رمز التحقق من Google (Authorization Code):", key="yt_auth_code_input", placeholder="4/0A...")
+                    with code_c2:
+                        st.write("")
+                        st.write("")
+                        if st.button("✅ توثيق القناة", key="yt_confirm_auth_btn", use_container_width=True):
+                            if auth_code_input.strip():
+                                with st.spinner("جاري حفظ التوثيق وتأكيد الاتصال بقناة يوتيوب..."):
+                                    ok = youtube_service.exchange_code_for_token(auth_code_input.strip())
+                                    if ok:
+                                        st.success("🎉 تم توثيق وربط قناة YouTube بنجاح!")
+                                        st.rerun()
+                                    else:
+                                        st.error("❌ رمز التحقق غير صالح أو منتهي الصلاحية، يرجى المحاولة مجدداً.")
+                            else:
+                                st.warning("يرجى إدخال رمز التحقق أولاً.")
+                else:
+                    st.caption("✅ قناتك موثقة وجاهزة لاستقبال مقاطع الشورتس تلقائياً.")
+
+            # Other platforms
             s_c1, s_c2 = st.columns(2)
             with s_c1:
                 st.markdown("""
-                - **▶️ YouTube Shorts:** اربط قناتك في Buffer -> Channels -> YouTube لنشر الفيديوهات القصيرة تلقائياً.
-                - **🎵 TikTok:** اربط حساب TikTok Business أو الشخصي للنشر المباشر.
+                - **🎵 TikTok:** للنشر المباشر التلقائي، اربط حسابك عبر Buffer في التبويب الأول.
                 """)
             with s_c2:
                 st.markdown("""
-                - **📸 Instagram Reels:** اربط حساب انستجرام المهني (Professional / Creator) لنشر الريلز.
-                - **📘 Facebook Reels / Pages:** اربط صفحاتك ومجموعاتك للنشر الفوري.
+                - **📸 Instagram & 📘 Facebook:** يتم النشر الفوري لصفحاتك عبر حساب Buffer المتصل.
                 """)
 
     with st.expander("🚀 " + tr("AI SEO & Viral Social Publisher (خبير السيو والنشر الفيروسي)"), expanded=False):
