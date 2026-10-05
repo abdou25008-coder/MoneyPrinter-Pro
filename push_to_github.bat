@@ -8,18 +8,9 @@ echo   Uploading MoneyPrinter Pro Updates to GitHub
 echo ===================================================
 echo.
 
-"%GIT_EXE%" config user.name "abdou25008-coder"
-"%GIT_EXE%" config user.email "abdou25008@users.noreply.github.com"
-"%GIT_EXE%" config credential.helper manager
-"%GIT_EXE%" remote remove origin 2>nul
-"%GIT_EXE%" remote add origin https://github.com/abdou25008-coder/MoneyPrinter-Pro.git
 "%GIT_EXE%" branch -M main
-
-echo Staging files...
 "%GIT_EXE%" add -A
-"%GIT_EXE%" commit -m "feat: MoneyPrinter Pro v2.0 update" 2>nul
-
-echo.
+"%GIT_EXE%" commit -m "feat: MoneyPrinter Pro updates" 2>nul
 echo Pushing to GitHub...
 "%GIT_EXE%" push -u origin main
 

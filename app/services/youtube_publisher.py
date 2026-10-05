@@ -87,25 +87,25 @@ class YouTubePublishService:
             logger.warning(f"Failed to fetch YouTube channel info: {exc}")
         return {"authenticated": False, "error": "فشل جلب معلومات القناة"}
 
-    def get_auth_url(self) -> str:
+    def get_auth_url(self, redirect_uri: str = "http://localhost:8501/") -> str:
         from google_auth_oauthlib.flow import Flow
         client_config = self.get_client_config()
         flow = Flow.from_client_config(
             client_config,
             scopes=SCOPES,
-            redirect_uri="urn:ietf:wg:oauth:2.0:oob",
+            redirect_uri=redirect_uri,
         )
         auth_url, _ = flow.authorization_url(prompt="consent", access_type="offline", include_granted_scopes="true")
         return auth_url
 
-    def exchange_code_for_token(self, code: str) -> bool:
+    def exchange_code_for_token(self, code: str, redirect_uri: str = "http://localhost:8501/") -> bool:
         try:
             from google_auth_oauthlib.flow import Flow
             client_config = self.get_client_config()
             flow = Flow.from_client_config(
                 client_config,
                 scopes=SCOPES,
-                redirect_uri="urn:ietf:wg:oauth:2.0:oob",
+                redirect_uri=redirect_uri,
             )
             flow.fetch_token(code=code.strip())
             creds = flow.credentials

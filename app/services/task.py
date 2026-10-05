@@ -1863,6 +1863,26 @@ def _run_pipeline(
     except Exception as exc:
         logger.warning(f"failed to update tasks_history.json: {exc}")
 
+    # Direct YouTube upload
+    if config.app.get("youtube_direct_enabled", False):
+        try:
+            from app.services.youtube_publisher import youtube_service
+            if youtube_service.is_authenticated() and final_video_paths:
+                target_video = final_video_paths[0]
+                yt_title = getattr(params, "seo_title", "") or task_subject
+                yt_desc = getattr(params, "seo_description", "") or (video_script[:500] if video_script else "")
+                logger.info(f"Uploading video directly to YouTube: {target_video}")
+                yt_res = youtube_service.upload_video(
+                    video_path=target_video,
+                    title=yt_title,
+                    description=yt_desc,
+                    privacy_status="public",
+                )
+                if yt_res.get("success"):
+                    logger.success(f"YouTube direct upload success: {yt_res.get('video_url')}")
+        except Exception as yt_err:
+            logger.warning(f"YouTube direct auto-upload warning: {yt_err}")
+
     if should_cross_post:
         scheduling_error = _schedule_cross_post(
             task_id=task_id,

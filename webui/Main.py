@@ -8878,6 +8878,15 @@ def _render_generation_controls(
                 st.markdown("###### ▶️ تكامل YouTube Data API v3 (الربط المباشر):")
                 from app.services.youtube_publisher import youtube_service
                 yt_is_auth = youtube_service.is_authenticated()
+
+                # Auto handle OAuth callback if redirected with ?code=
+                oauth_code = st.query_params.get("code")
+                if oauth_code and not yt_is_auth:
+                    with st.spinner("جاري إتمام التوثيق التلقائي مع YouTube..."):
+                        if youtube_service.exchange_code_for_token(oauth_code, redirect_uri="http://localhost:8501/"):
+                            st.query_params.clear()
+                            st.success("🎉 تم توثيق وربط قناة YouTube بنجاح!")
+                            st.rerun()
                 
                 yt_col1, yt_col2 = st.columns([1.5, 1])
                 with yt_col1:
@@ -8899,33 +8908,39 @@ def _render_generation_controls(
 
                 if not yt_is_auth:
                     st.markdown("""
-                    **لربط وتوثيق قناتك على يوتيوب في خطوتين:**
-                    1. اضغط على رابط المصادقة بالأسفل لتسجيل الدخول بحساب Google والسماح بنشر الفيديوهات.
-                    2. انسخ رمز التحقق (Authorization Code) وضعه في الحقل واضغط **توثيق القناة**.
+                    **لربط وتوثيق قناتك على يوتيوب بضغطة زر:**
+                    1. اضغط على رابط المصادقة بالأسفل لتسجيل الدخول والموافقة في Google.
+                    2. سيتم تحويلك وإتمام التوثيق التلقائي فوراً!
                     """)
                     try:
-                        auth_link = youtube_service.get_auth_url()
+                        auth_link = youtube_service.get_auth_url(redirect_uri="http://localhost:8501/")
                         st.markdown(f"[🔗 اضغط هنا لتسجيل الدخول والموافقة في Google]({auth_link})", unsafe_allow_html=True)
                     except Exception as yt_url_err:
                         st.caption(f"تأكد من إعدادات Google Cloud: {yt_url_err}")
 
                     code_c1, code_c2 = st.columns([2.5, 1])
                     with code_c1:
-                        auth_code_input = st.text_input("رمز التحقق من Google (Authorization Code):", key="yt_auth_code_input", placeholder="4/0A...")
+                        auth_code_input = st.text_input("أو الصق رمز التحقق / الرابط الكامل هنا يدوياً إذا لم يتم التحويل تلقائياً:", key="yt_auth_code_input", placeholder="4/0A... أو الصق الرابط كاملاً")
                     with code_c2:
                         st.write("")
                         st.write("")
                         if st.button("✅ توثيق القناة", key="yt_confirm_auth_btn", use_container_width=True):
-                            if auth_code_input.strip():
+                            val = auth_code_input.strip()
+                            if "code=" in val:
+                                import urllib.parse
+                                parsed = urllib.parse.urlparse(val)
+                                q_params = urllib.parse.parse_qs(parsed.query)
+                                val = q_params.get("code", [val])[0]
+                            if val:
                                 with st.spinner("جاري حفظ التوثيق وتأكيد الاتصال بقناة يوتيوب..."):
-                                    ok = youtube_service.exchange_code_for_token(auth_code_input.strip())
+                                    ok = youtube_service.exchange_code_for_token(val, redirect_uri="http://localhost:8501/")
                                     if ok:
                                         st.success("🎉 تم توثيق وربط قناة YouTube بنجاح!")
                                         st.rerun()
                                     else:
-                                        st.error("❌ رمز التحقق غير صالح أو منتهي الصلاحية، يرجى المحاولة مجدداً.")
+                                        st.error("❌ رمز التحقق غير صالح أو منتهي الصلاحية، يرجى الضغط على الرابط أعلاه والمحاولة مجدداً.")
                             else:
-                                st.warning("يرجى إدخال رمز التحقق أولاً.")
+                                st.warning("يرجى إدخال رمز التحقق أو الرابط أولاً.")
                 else:
                     st.caption("✅ قناتك موثقة وجاهزة لاستقبال مقاطع الشورتس تلقائياً.")
 
