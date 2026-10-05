@@ -115,24 +115,23 @@ class BufferPublishService:
                 return []
 
             profiles = []
-            channels_query = """
-            query GetChannels($orgId: String!) {
-                channels(input: { organizationId: $orgId }) {
-                    id
-                    name
-                    service
-                    avatarUrl
-                }
-            }
-            """
-
             for org in orgs:
                 org_id = org.get("id")
                 if not org_id:
                     continue
+                channels_query = f"""
+                query {{
+                    channels(input: {{ organizationId: "{org_id}" }}) {{
+                        id
+                        name
+                        service
+                        avatar
+                    }}
+                }}
+                """
                 c_resp = requests.post(
                     self.GRAPHQL_API_URL,
-                    json={"query": channels_query, "variables": {"orgId": org_id}},
+                    json={"query": channels_query},
                     headers=headers,
                     timeout=12,
                 )
@@ -146,7 +145,7 @@ class BufferPublishService:
                             "service": service_code,
                             "service_name": SERVICE_DISPLAY_NAMES.get(service_code, service_code.capitalize()),
                             "formatted_username": ch.get("name", "Unnamed Channel"),
-                            "avatar": ch.get("avatarUrl", ""),
+                            "avatar": ch.get("avatar", ""),
                             "organization": org.get("name", ""),
                         })
             return profiles
