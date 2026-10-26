@@ -720,6 +720,23 @@ def get_video_materials(
 
     if has_local and not stock_sources:
         logger.info("\n\n## preprocess local materials")
+        if not params.video_materials:
+            logger.info("No explicit local materials provided, scanning unified stock hub: D:\\Fathom X\\NEW\\مقاطع ستوك")
+            stock_dir = utils.storage_dir("local_videos")
+            if os.path.isdir(stock_dir):
+                valid_exts = (".mp4", ".mov", ".mkv", ".webm")
+                all_clips = [
+                    f for f in os.listdir(stock_dir)
+                    if f.lower().endswith(valid_exts) and not f.startswith(".")
+                ]
+                if all_clips:
+                    pick_count = max(len(video_terms or []), 10)
+                    selected_clips = random.sample(all_clips, min(pick_count, len(all_clips)))
+                    params.video_materials = [
+                        MaterialInfo(provider="local", url=os.path.join(stock_dir, c))
+                        for c in selected_clips
+                    ]
+                    logger.info(f"Auto-selected {len(params.video_materials)} clips from unified stock hub")
         materials = video.preprocess_video(
             materials=params.video_materials, clip_duration=params.video_clip_duration
         )
@@ -796,14 +813,30 @@ def get_video_materials(
         effective_source = stock_sources if stock_sources else params.video_source
         logger.info(f"\n\n## downloading videos from {effective_source}")
         local_videos = []
-        if has_local and params.video_materials:
-            logger.info("\n\n## preprocessing accompanying local materials")
-            local_processed = video.preprocess_video(
-                materials=params.video_materials, clip_duration=params.video_clip_duration
-            )
-            if local_processed:
-                local_videos = [m.url for m in local_processed]
-                logger.info(f"Loaded {len(local_videos)} local video materials")
+        if has_local:
+            if not params.video_materials:
+                stock_dir = utils.storage_dir("local_videos")
+                if os.path.isdir(stock_dir):
+                    valid_exts = (".mp4", ".mov", ".mkv", ".webm")
+                    all_clips = [
+                        f for f in os.listdir(stock_dir)
+                        if f.lower().endswith(valid_exts) and not f.startswith(".")
+                    ]
+                    if all_clips:
+                        pick_count = min(5, len(all_clips))
+                        selected_clips = random.sample(all_clips, pick_count)
+                        params.video_materials = [
+                            MaterialInfo(provider="local", url=os.path.join(stock_dir, c))
+                            for c in selected_clips
+                        ]
+            if params.video_materials:
+                logger.info("\n\n## preprocessing accompanying local materials")
+                local_processed = video.preprocess_video(
+                    materials=params.video_materials, clip_duration=params.video_clip_duration
+                )
+                if local_processed:
+                    local_videos = [m.url for m in local_processed]
+                    logger.info(f"Loaded {len(local_videos)} local video materials")
 
         try:
             downloaded_videos = material.download_videos(

@@ -91,6 +91,11 @@ def root_dir():
 
 
 def storage_dir(sub_dir: str = "", create: bool = False):
+    if sub_dir in ("local_videos", "cache_videos"):
+        unified_stock = os.path.normpath(r"D:\Fathom X\NEW\مقاطع ستوك")
+        if os.path.isdir(unified_stock):
+            return unified_stock
+
     d = os.path.join(root_dir(), "storage")
     if sub_dir:
         d = os.path.join(d, sub_dir)
