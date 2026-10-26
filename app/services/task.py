@@ -721,7 +721,7 @@ def get_video_materials(
     if has_local and not stock_sources:
         logger.info("\n\n## preprocess local materials")
         if not params.video_materials:
-            logger.info("No explicit local materials provided, scanning unified stock hub: D:\\Fathom X\\NEW\\مقاطع ستوك")
+            logger.info("No explicit local materials provided, scanning unified stock hub: D:\\SMART HELTHY\\مقاطع ستوك سمارت هيلث للفيديو العريض")
             stock_dir = utils.storage_dir("local_videos")
             if os.path.isdir(stock_dir):
                 valid_exts = (".mp4", ".mov", ".mkv", ".webm")

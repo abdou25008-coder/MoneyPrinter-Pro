@@ -450,7 +450,7 @@ endpoint = ""
 # Material storage: "" uses ./storage/cache_videos, "task" stores materials in
 # each task directory, and an absolute path stores materials in that directory.
 # Example: material_directory = "/path/to/videos"
-material_directory = "D:/Fathom X/NEW/مقاطع ستوك"
+material_directory = "D:/SMART HELTHY/مقاطع ستوك سمارت هيلث للفيديو العريض"
 
 # Optional Redis-backed task state. Keep Redis private to this application;
 # untrusted writers must not be able to modify serialized task records.
